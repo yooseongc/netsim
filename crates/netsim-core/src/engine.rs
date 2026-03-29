@@ -283,26 +283,8 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         return finalize(scenario, trace, all_matched_rules, FinalVerdict::LocalDelivery, &state);
     }
 
-    // --- sysctl: rp_filter (Reverse Path Filtering) ---
-    if let Some(drop_result) = check_rp_filter(
-        sysctl, &state, &scenario.ip_rules, &scenario.routing_tables, &scenario.interfaces,
-    ) {
-        seq += 1;
-        trace.push(TraceStep {
-            seq,
-            stage: PipelineStage::RpFilter,
-            description: "rp_filter check".to_string(),
-            state_before: state.clone(),
-            state_after: state.clone(),
-            state_changes: vec![],
-            matched_rules: vec![],
-            decision: drop_result.decision.clone(),
-            explain: drop_result.explain.clone(),
-        });
-        return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
-    }
-
     // --- Stage 2: tc ingress ---
+    // Linux: tc ingress runs after XDP, before netfilter
     seq += 1;
     let state_before = state.clone();
     let result = pipeline::tc_ingress::execute(&state);
@@ -387,6 +369,29 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         } else if let Some(verdict) = terminal_verdict(&result.decision) {
             return finalize(scenario, trace, all_matched_rules, verdict, &state);
         }
+    }
+
+    // --- sysctl: rp_filter (Reverse Path Filtering) ---
+    // Linux: rp_filter is checked in ip_rcv_finish → fib_validate_source,
+    // which is after PREROUTING netfilter but before routing decision.
+    // PREROUTING mangle may have changed the mark (affecting policy routing),
+    // so rp_filter runs after mangle.
+    if let Some(drop_result) = check_rp_filter(
+        sysctl, &state, &scenario.ip_rules, &scenario.routing_tables, &scenario.interfaces,
+    ) {
+        seq += 1;
+        trace.push(TraceStep {
+            seq,
+            stage: PipelineStage::RpFilter,
+            description: "rp_filter check".to_string(),
+            state_before: state.clone(),
+            state_after: state.clone(),
+            state_changes: vec![],
+            matched_rules: vec![],
+            decision: drop_result.decision.clone(),
+            explain: drop_result.explain.clone(),
+        });
+        return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
     }
 
     // --- sysctl: route_localnet check ---

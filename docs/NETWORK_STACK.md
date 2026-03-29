@@ -1,721 +1,580 @@
-# netsim 네트워크 스택 시뮬레이션 명세
+# 리눅스 네트워크 스택 시뮬레이션 구현 명세
+
+> 이 문서는 `netsim-core` 엔진의 **현재 구현**을 기준으로 작성되었습니다.
+> 소스 참조: `engine.rs`, `trace.rs`, `pipeline/mod.rs`, `model/sysctl.rs`, `model/interface.rs`, `model/packet.rs`, `session_engine.rs`
+
+---
 
 ## 1. 개요
 
-netsim은 Linux 커널의 ingress 패킷 처리 경로를 정적으로 시뮬레이션한다. 이 문서는 시뮬레이션 엔진이 구현하는 패킷 처리 파이프라인의 정확한 동작을 기술한다.
+netsim 엔진은 두 가지 패킷 경로를 시뮬레이션한다.
+
+| 경로 | 진입점 | 설명 |
+|------|--------|------|
+| **Ingress** (`engine::run`) | 외부에서 수신한 패킷 | NIC 수신 → netfilter → 라우팅 → 로컬/포워딩 |
+| **Output** (`engine::run_output`) | 로컬에서 발신한 패킷 | OUTPUT chains → 라우팅 → POSTROUTING → 전송 |
+
+두 경로 모두 `PacketState`를 변이(mutate)하면서 각 단계(stage)를 순차적으로 통과하며, 각 단계의 결과를 `TraceStep`으로 기록한다.
 
 ---
 
-## 2. 전체 파이프라인 다이어그램
+## 2. Ingress 파이프라인 다이어그램
 
 ```
-                              ┌──────────────────────────────────────┐
-                              │           NIC (수신)                  │
-                              └──────────────┬───────────────────────┘
-                                             │
-                                             ▼
-                              ┌──────────────────────────────────────┐
-                              │     INTERFACE_CHECK                   │
-                              │  • 인터페이스 존재 확인                │
-                              │  • 인터페이스 상태 확인 (UP/DOWN)      │
-                              │  • 브릿지 멤버 감지                    │
-                              └──────────────┬───────────────────────┘
-                                             │ DOWN이면 DROP
-                                             ▼
-                              ┌──────────────────────────────────────┐
-                              │          XDP                          │
-                              │  (eXpress Data Path)                 │
-                              │  • 인터페이스별 XDP 프로그램 평가       │
-                              │  • 드라이버 레벨, L2/L3 처리 이전      │
-                              ├──────────────────────────────────────┤
-                              │  결과: PASS / DROP / TX / REDIRECT    │
-                              └────┬─────┬─────┬─────┬──────────────┘
-                              DROP │PASS │ TX  │REDIR│
-                                ▼  │     ▼     ▼     │
-                              종료  │   종료   종료    │
-                                   ▼                  │
-                              ┌──────────────────────────────────────┐
-                              │     ARP_PROCESS (ARP 패킷만)          │
-                              │  • sysctl arp_ignore 검사             │
-                              │    level 1: target IP가 수신 iface에   │
-                              │             설정되어 있는지 확인        │
-                              │    level 2: + sender IP가 같은        │
-                              │             서브넷인지 확인             │
-                              └──────────────┬───────────────────────┘
-                                             │ 불합격 시 DROP
-                                             ▼
-                          ┌──── EtherType 확인 ────┐
-                          │                        │
-                    L2-only (ARP,                 IP (IPv4/IPv6)
-                     STP, LLDP)                    │
-                          │                        │
-                          ▼                        ▼
-                ┌─────────────────┐    ┌──────────────────────────────┐
-                │   L2_BYPASS     │    │     RP_FILTER                 │
-                │ netfilter/      │    │  Reverse Path 필터링 (sysctl)  │
-                │ routing 건너뜀  │    │  • strict: 역라우팅 iface =    │
-                │ → LOCAL_DELIVERY│    │           ingress iface 확인    │
-                └─────────────────┘    │  • loose: 역라우팅 가능 여부    │
-                                       └──────────────┬───────────────┘
-                                                      │ 불합격 시 DROP
-                                                      ▼
-                                       ┌──────────────────────────────┐
-                                       │     TC_INGRESS               │
-                                       │  (traffic control ingress)   │
-                                       │  MVP: pass-through           │
-                                       └──────────────┬───────────────┘
-                                                      │
-                                                      ▼
-                                       ┌──────────────────────────────┐
-                                       │     CONNTRACK_IN             │
-                                       │  conntrack 상태 조회          │
-                                       │  • NEW / ESTABLISHED /       │
-                                       │    RELATED / INVALID         │
-                                       │  (사용자 선언 기반)            │
-                                       └──────────────┬───────────────┘
-                                                      │
-                                                      ▼
-                              ┌────────────────────────────────────────────────┐
-                              │                PREROUTING                       │
-                              │  netfilter hook: prerouting                     │
-                              │  nftables + iptables 체인을 priority 순으로 평가 │
-                              │                                                │
-                              │  iptables 기본 priority:                        │
-                              │    raw (-300) → mangle (-150) → nat (-100)     │
-                              │                                                │
-                              │  주요 처리:                                     │
-                              │  • raw: conntrack 바이패스 (NOTRACK)            │
-                              │  • mangle: mark 변경, DSCP 수정                │
-                              │  • nat: DNAT, REDIRECT, TPROXY                 │
-                              │                                                │
-                              │  NAT 처리:                                     │
-                              │  • DNAT: dst_ip/dst_port 변경                  │
-                              │  • REDIRECT: dst_ip를 수신 iface의 IP로 변경   │
-                              │  • TPROXY: 패킷 stolen, mark 설정              │
-                              │  • ICMP: IP만 변경, 포트 변경 없음              │
-                              └────────────────────────┬───────────────────────┘
-                                                       │ DROP/REJECT → 종료
-                                                       ▼
-                              ┌────────────────────────────────────────────────┐
-                              │           route_localnet 검사 (sysctl)          │
-                              │  DNAT 후 dst가 127.0.0.0/8이면:                │
-                              │  • route_localnet=0 → DROP                     │
-                              │  • route_localnet=1 → 통과                     │
-                              └────────────────────────┬───────────────────────┘
-                                                       │
-                                                       ▼
-                              ┌────────────────────────────────────────────────┐
-                              │              ROUTING DECISION                   │
-                              │                                                │
-                              │  1. dst_ip가 로컬 인터페이스 주소인지 확인       │
-                              │     → 매칭 시 LOCAL                             │
-                              │                                                │
-                              │  2. ip rule 순회 (priority 오름차순)             │
-                              │     selector 매칭: from, to, fwmark,           │
-                              │       iif, oif, ipproto, sport, dport          │
-                              │     fwmark: (packet_mark & mask) == fwmark     │
-                              │                                                │
-                              │  3. 매칭된 rule의 action에 따라:               │
-                              │     • Lookup(table_id) → 라우팅 테이블 조회     │
-                              │     • Blackhole/Unreachable/Prohibit → DROP     │
-                              │                                                │
-                              │  4. 라우팅 테이블에서 Longest Prefix Match       │
-                              │     tie-break: prefix_len > metric              │
-                              │                                                │
-                              │  5. Route Type에 따른 결정:                     │
-                              │     • Local/Broadcast → LOCAL_DELIVERY          │
-                              │     • Unicast → FORWARD (egress_if 설정)       │
-                              │     • Blackhole/Unreachable/Prohibit → DROP     │
-                              │     • Throw → 다음 ip rule로 계속              │
-                              └──────────┬──────────────────┬──────────────────┘
-                                         │                  │
-                                   LOCAL  │                  │ FORWARD
-                                         ▼                  ▼
-            ┌──────────────────────────────┐  ┌─────────────────────────────────────┐
-            │   icmp_echo_ignore_all       │  │  EGRESS INTERFACE_CHECK              │
-            │   (sysctl, ICMP echo만)      │  │  • 인터페이스 존재 확인              │
-            │   → DROP                     │  │  • 인터페이스 상태 확인 (UP/DOWN)    │
-            └──────────────┬───────────────┘  └──────────────┬──────────────────────┘
-                           │                                 │ DOWN/미존재 → DROP
-                           ▼                                 ▼
-            ┌──────────────────────────────┐  ┌─────────────────────────────────────┐
-            │         INPUT                │  │  ip_forward 검사 (sysctl)            │
-            │  netfilter hook: input       │  │  • ip_forward=0 → DROP              │
-            │  체인 priority 순 평가       │  │  • 인터페이스별 forwarding 오버라이드  │
-            │  • mangle → filter           │  └──────────────┬──────────────────────┘
-            └──────────────┬───────────────┘                 │
-                           │ DROP/REJECT                     ▼
-                           │ → 종료            ┌─────────────────────────────────────┐
-                           ▼                   │         FORWARD                      │
-                    LOCAL_DELIVERY              │  netfilter hook: forward             │
-                                               │                                     │
-                                               │  1. TTL 감소 (decrement then check) │
-                                               │     TTL=0 → DROP                    │
-                                               │     (ICMP Time Exceeded 전송)       │
-                                               │                                     │
-                                               │  2. 체인 priority 순 평가           │
-                                               │     • mangle → filter               │
-                                               └──────────────┬──────────────────────┘
-                                                              │ DROP/REJECT → 종료
-                                                              ▼
-                                               ┌─────────────────────────────────────┐
-                                               │         POSTROUTING                  │
-                                               │  netfilter hook: postrouting         │
-                                               │  체인 priority 순 평가              │
-                                               │                                     │
-                                               │  iptables 기본 priority:             │
-                                               │    mangle (-150) → nat (100)        │
-                                               │                                     │
-                                               │  주요 처리:                          │
-                                               │  • SNAT: src_ip/src_port 변경       │
-                                               │  • MASQUERADE: egress iface의       │
-                                               │    IP로 SNAT (주소 패밀리 매칭)      │
-                                               │  • ICMP: IP만 변경, 포트 없음       │
-                                               └──────────────┬──────────────────────┘
-                                                              │ DROP/REJECT → 종료
-                                                              ▼
-                                               ┌─────────────────────────────────────┐
-                                               │         MTU_CHECK                    │
-                                               │  egress 인터페이스의 MTU 검사        │
-                                               │                                     │
-                                               │  packet_length > MTU 인 경우:        │
-                                               │  • DF flag=1 → DROP                 │
-                                               │    (ICMP Frag Needed Type3 Code4)   │
-                                               │  • DF flag=0 → fragmentation 주석   │
-                                               │                                     │
-                                               │  packet_length 미지정 → 건너뜀      │
-                                               └──────────────┬──────────────────────┘
-                                                              │
-                                                              ▼
-                                               ┌─────────────────────────────────────┐
-                                               │      CONNTRACK_CONFIRM               │
-                                               │  conntrack 항목 확정                  │
-                                               └──────────────┬──────────────────────┘
-                                                              │
-                                                              ▼
-                                                        FORWARDED
-                                                   (egress 인터페이스로 전송)
+                        패킷 수신 (NIC)
+                             |
+                    [InterfaceCheck]
+                     존재? UP? 브릿지 멤버?
+                             |
+              +----- 브릿지 멤버? -----+
+              |  (master 존재)         |  (아님)
+              |                        |
+   bridge_nf_call_iptables?            |
+      false:                           |
+   [BridgeForward]                     |
+    L2 포워딩 --> FORWARDED            |
+      true:                            |
+      계속 v  <------------------------+
+              |
+   [InterfaceCheck] Physical NIC 수신 프레임 크기
+    (Physical NIC만: pkt_len > max(mtu+18, 9216) --> DROP)
+              |
+           [XDP]
+    XDP_PASS / XDP_DROP / XDP_TX / XDP_REDIRECT
+              |
+        [ArpProcess]  (ARP 패킷만)
+         arp_ignore 검사
+              |
+        [L2Bypass]  (ARP/STP/LLDP 패킷)
+         --> LOCAL_DELIVERY (netfilter/routing 건너뜀)
+              |
+        [TcIngress]
+         TC ingress qdisc
+              |
+      [PreRoutingRaw]
+       PREROUTING 체인 중 priority <= -200 (raw 테이블)
+              |
+       [ConntrackIn]
+        conntrack 조회 (ct_state 결정)
+              |
+       [PreRouting]
+        PREROUTING 체인 중 priority > -200
+        (mangle -150, dnat -100 등)
+        * TPROXY 적용 시 tproxy_applied=true 설정 후 계속 진행
+              |
+        [RpFilter]
+         sysctl rp_filter 검사 (strict/loose)
+              |
+      route_localnet 검사
+       (dst가 127.0.0.0/8이면 route_localnet 필요)
+              |
+      [RoutingDecision]
+       라우팅 테이블 조회 --> local / forward 결정
+              |
+       +------+------+
+       |             |
+   LocalDelivery  ForwardTo
+       |             |
+  icmp_echo_     [InterfaceCheck]
+  ignore_all?     egress IF 존재/UP 검사
+       |             |
+  [LocalInput]   ip_forward 검사
+   INPUT chains      |
+       |         [Forward]
+  LOCAL_DELIVERY  FORWARD chains
+                     |
+                [PostRouting]
+                 POSTROUTING chains (SNAT/MASQ)
+                     |
+                 [MtuCheck]
+                  egress MTU 검사
+                  (DF=1 --> DROP, DF=0 --> fragmentation)
+                     |
+              [ConntrackConfirm]
+                     |
+                  FORWARDED
 ```
 
 ---
 
-## 3. 단계별 상세
+## 2.1. Output 파이프라인 다이어그램
 
-### 3.1 INTERFACE_CHECK
-
-NIC에서 패킷이 수신되면 가장 먼저 인터페이스 상태를 확인한다.
-
-| 검사 | 조건 | 결과 |
-|------|------|------|
-| 존재 확인 | `ingress_interface`가 시나리오에 없음 | DROP |
-| 상태 확인 | 인터페이스 state=Down | DROP |
-| 브릿지 멤버 | `master` 필드가 설정됨 | CONTINUE (정보 기록) |
-
-**구현 파일**: `engine.rs` Stage 0
+```
+              로컬 발신 패킷
+                   |
+            [Output] RAW
+             OUTPUT 체인 중 priority <= -200
+                   |
+            [ConntrackIn]
+             conntrack 조회
+                   |
+            [Output] post-CT
+             OUTPUT 체인 중 priority > -200
+             (mangle, filter, nat)
+                   |
+          [RoutingDecision]
+           라우팅 테이블 조회 (egress IF 결정)
+                   |
+          [PostRouting]
+           POSTROUTING chains (SNAT/MASQ)
+                   |
+           [MtuCheck]
+            egress MTU 검사
+                   |
+        [ConntrackConfirm]
+                   |
+               SENT
+```
 
 ---
 
-### 3.2 XDP (eXpress Data Path)
+## 3. 단계별 상세 설명
 
-드라이버 레벨에서 실행되는 eBPF 프로그램. L2/L3 처리 이전에 동작한다.
+### 3.1 InterfaceCheck (인터페이스 검증)
 
-**처리 순서:**
-1. ingress 인터페이스에 연결된 XDP 프로그램 찾기
-2. 프로그램의 규칙을 순서대로 평가 (match-action)
-3. 매칭되는 규칙이 없으면 `default_action` 적용
+`PipelineStage::InterfaceCheck`
 
-| XDP Action | 동작 | FinalVerdict |
-|------------|------|-------------|
-| `XDP_PASS` | 다음 단계로 진행 | — |
-| `XDP_DROP` | 패킷 즉시 폐기 | Drop |
-| `XDP_TX` | 같은 인터페이스로 반사 전송 | Tx |
-| `XDP_REDIRECT` | 다른 인터페이스로 전환 | Redirect |
-| `XDP_ABORTED` | 오류, 패킷 폐기 | Drop |
+Ingress 경로의 첫 번째 단계. 여러 하위 검사를 포함한다.
 
-**특징:**
-- ARP/STP 등 L2 패킷도 XDP를 통과
-- XDP에서 DROP되면 netfilter/routing 도달하지 않음
-- 간소화된 match-action 모델 (eBPF 바이트코드 해석 아님)
+| 하위 검사 | 조건 | 결과 |
+|-----------|------|------|
+| (a) 인터페이스 존재 | ingress IF가 시나리오에 없음 | DROP |
+| (b) 인터페이스 상태 | ingress IF가 DOWN | DROP |
+| (c) 브릿지 멤버 감지 | `iface.master`가 존재 | Continue (정보 기록) |
+| (d) Physical NIC 프레임 크기 | `kind=Physical`, `pkt_len > max(mtu+18, 9216)` | DROP |
+| (e) Egress IF 검증 (포워딩 시) | egress IF 없음 또는 DOWN | DROP |
 
-**구현 파일**: `pipeline/xdp.rs`
+**Physical NIC 프레임 크기 검사**: 물리 NIC는 드라이버 수준에서 최대 수신 프레임 크기를 제한한다. `max(mtu + 18, 9216)` 바이트를 초과하면 DROP. 가상 인터페이스(veth, bridge, tun, tap)는 이 검사를 건너뛴다.
 
----
+### 3.2 BridgeForward (브릿지 L2 포워딩)
 
-### 3.3 ARP 처리
+`PipelineStage::BridgeForward`
 
-ARP 패킷(EtherType=ARP)에만 적용. XDP 이후, L2 바이패스 이전.
+ingress 인터페이스가 브릿지 멤버이고 `sysctl.bridge_nf_call_iptables = false`이면, IP netfilter 스택을 거치지 않고 L2 레벨에서 브릿지가 직접 포워딩한다. 최종 verdict: **Forwarded**.
 
-**sysctl `arp_ignore` 동작:**
+`bridge_nf_call_iptables = true`이면 이 단계를 건너뛰고 일반 IP 스택 경로를 계속 진행한다.
 
-| 레벨 | 조건 | 동작 |
-|------|------|------|
-| 0 | — | 모든 ARP에 응답 (기본) |
-| 1 | target IP가 수신 인터페이스에 설정되지 않음 | ARP 응답 억제 (DROP) |
-| 2 | + sender IP가 수신 인터페이스와 같은 서브넷이 아님 | ARP 응답 억제 (DROP) |
+### 3.3 XDP
 
-**관련 sysctl:**
-- `arp_ignore`: ARP 응답 제어 (0~2)
-- `arp_announce`: ARP 요청 소스 IP 선택 (0~2)
-- `arp_filter`: ARP 필터링
-- `proxy_arp`: 다른 서브넷의 ARP에 대리 응답
+`PipelineStage::Xdp`
 
-**구현 파일**: `engine.rs` ARP processing 블록
+드라이버 레벨에서 가장 먼저 실행. XDP 프로그램 규칙을 평가한다.
 
----
+| XDP verdict | 동작 |
+|-------------|------|
+| XDP_PASS | 다음 단계로 계속 |
+| XDP_DROP | DROP |
+| XDP_TX | 같은 인터페이스로 반사 --> FinalVerdict::Tx |
+| XDP_REDIRECT | 다른 인터페이스로 리다이렉트 --> FinalVerdict::Redirect |
 
-### 3.4 L2 바이패스
+### 3.4 ArpProcess (ARP 처리)
 
-L2-only 프로토콜(ARP, STP, LLDP)은 IP 스택을 타지 않으므로 netfilter와 routing을 건너뛴다.
+`PipelineStage::ArpProcess`
 
-```
-EtherType이 L2-only → L2_BYPASS → LOCAL_DELIVERY
-```
+ARP 패킷(`ethertype = Arp`)에만 적용. `sysctl.arp_ignore` 값에 따라 ARP 응답을 억제한다.
 
-**L2-only 판별:**
-- `EtherType::Arp`
-- `EtherType::Stp`
-- `EtherType::Lldp`
+| arp_ignore | 동작 |
+|------------|------|
+| 0 | 모든 로컬 IP에 대해 응답 (기본값) |
+| >= 1 | target IP가 수신 인터페이스에 설정된 경우만 응답 |
+| >= 2 | 추가로 sender IP가 같은 서브넷인 경우만 응답 |
 
-**구현 파일**: `engine.rs`, `model/packet.rs` (`EtherType::is_l2_only()`)
+### 3.5 L2Bypass (L2 전용 패킷 바이패스)
 
----
+`PipelineStage::L2Bypass`
 
-### 3.5 RP_FILTER (Reverse Path Filter)
+`ethertype.is_l2_only()` (ARP, STP, LLDP)인 패킷은 XDP/ARP 처리 이후 netfilter와 라우팅을 건너뛰고 바로 **LOCAL_DELIVERY**로 전달된다.
 
-소스 IP에 대한 역방향 라우팅 검증. 스푸핑 방지 목적.
+### 3.6 TcIngress (TC Ingress)
 
-**sysctl `rp_filter` 동작:**
+`PipelineStage::TcIngress`
 
-| 모드 | 값 | 동작 |
-|------|---|------|
-| Off | 0 | 검사 안 함 |
-| Strict | 1 | 역라우팅 결과의 egress == ingress 확인 |
-| Loose | 2 | 역라우팅이 가능하기만 하면 통과 |
+XDP 이후, PREROUTING 이전에 실행. TC ingress qdisc의 필터/액션을 평가한다.
+현재 구현에서는 정보 기록(pass-through) 단계.
 
-**역라우팅 (reverse_path_lookup):**
-1. src_ip를 dst로 하여 ip rule + routing table 조회
-2. 매칭되는 route의 dev (출력 인터페이스) 반환
-3. Strict: 반환된 dev == 패킷의 ingress_if 여야 통과
+### 3.7 PreRoutingRaw (PREROUTING RAW)
 
-**구현 파일**: `engine.rs` (`check_rp_filter`), `pipeline/routing.rs` (`reverse_path_lookup`)
+`PipelineStage::PreRoutingRaw`
 
----
+PREROUTING 체인 중 **priority <= -200**인 체인만 평가한다. 일반적으로 raw 테이블(priority -300)이 여기에 해당한다. conntrack 이전에 실행되므로 NOTRACK 마킹 등이 가능하다.
 
-### 3.6 TC_INGRESS (Traffic Control)
+RAW 체인이 없으면 이 단계는 건너뛴다.
 
-트래픽 제어 ingress qdisc. **MVP에서는 pass-through.**
+### 3.8 ConntrackIn (Conntrack 조회)
 
-향후 확장: tc filter, clsact, eBPF classifier
+`PipelineStage::ConntrackIn`
 
-**구현 파일**: `pipeline/tc_ingress.rs`
+RAW 테이블 이후, mangle/nat 이전에 실행. 패킷의 conntrack 상태(`ct_state`)를 결정한다. 현재 구현에서는 사용자가 선언한 `ct_state` 값을 그대로 사용한다.
 
----
+### 3.9 PreRouting (PREROUTING)
 
-### 3.7 CONNTRACK_IN (Conntrack Lookup)
+`PipelineStage::PreRouting`
 
-연결 추적 테이블 조회. 패킷의 conntrack 상태를 결정한다.
+PREROUTING 체인 중 **priority > -200**인 체인을 평가한다. mangle(-150), DNAT(-100) 등이 여기에 해당한다.
 
-**정적 시뮬레이션 제한:**
-- 실제 conntrack 테이블을 유지하지 않음
-- 사용자가 `PacketDef.conntrack_state`로 직접 선언
-- 세션 엔진 사용 시: forward=NEW, reply=ESTABLISHED 자동 설정
+**TPROXY 특수 처리**: TPROXY NAT 액션이 적용되면 `tproxy_applied = true`로 설정하고 패킷을 Stolen으로 처리하지 않는다. 대신 라우팅 --> INPUT 경로를 통해 로컬 전달된다. TPROXY는 mark를 설정하여 policy routing이 local 테이블로 패킷을 전달하도록 한다.
 
-| conntrack 상태 | 의미 |
-|---------------|------|
-| `NEW` | 새로운 연결 시도 |
-| `ESTABLISHED` | 양방향 트래픽 확인된 연결 |
-| `RELATED` | 기존 연결과 관련된 새 연결 (예: FTP data) |
-| `INVALID` | 어떤 연결에도 속하지 않는 비정상 패킷 |
-| `UNTRACKED` | conntrack 추적하지 않음 (raw table NOTRACK) |
+### 3.10 RpFilter (Reverse Path Filter)
 
-**구현 파일**: `engine.rs` Stage 3, `model/conntrack.rs`
+`PipelineStage::RpFilter`
 
----
+PREROUTING 이후, 라우팅 결정 이전에 실행. `sysctl.rp_filter` 값에 따라 source IP의 역방향 라우팅을 검증한다.
 
-### 3.8 PREROUTING (Netfilter)
+| 모드 | 동작 |
+|------|------|
+| Off (0) | 검사 안 함 |
+| Strict (1) | 역라우팅 결과의 egress IF == ingress IF 여야 통과 |
+| Loose (2) | 어떤 인터페이스로든 역라우팅 가능하면 통과 |
 
-netfilter `prerouting` hook의 모든 체인을 priority 순으로 평가.
+PREROUTING mangle이 mark를 변경할 수 있고, mark가 policy routing에 영향을 주므로 rp_filter는 PREROUTING 이후에 실행된다.
 
-**체인 수집 및 정렬:**
-```
-nftables의 hook=prerouting 체인들
-  + iptables 테이블의 PREROUTING 체인들
-→ priority 오름차순 정렬
-```
+### 3.11 RoutingDecision (라우팅 결정)
 
-**iptables 기본 priority:**
+`PipelineStage::RoutingDecision`
 
-| 테이블 | priority | 역할 |
-|--------|---------|------|
-| raw | -300 | conntrack bypass (NOTRACK) |
-| mangle | -150 | mark 변경, DSCP 수정 |
-| nat | -100 | DNAT, REDIRECT, TPROXY |
+ip rule --> routing table 순서로 라우팅 조회를 수행한다.
 
-**규칙 평가:**
-1. 체인 내 규칙을 순서대로 평가
-2. 모든 match 조건이 AND로 결합, 모두 충족 시 action 실행
-3. 빈 matches → catch-all (모든 패킷 매칭)
+| 결과 | 의미 |
+|------|------|
+| LocalDelivery | dst가 로컬 주소 --> INPUT 경로 |
+| ForwardTo { egress_if, next_hop } | 포워딩 대상 결정 |
+| Drop / Reject | 라우팅 실패 |
 
-**NAT 액션 (PREROUTING):**
+추가 검사:
+- `route_localnet`: dst가 `127.0.0.0/8`이면 해당 sysctl 활성화 필요 (라우팅 전에 확인)
+- `icmp_echo_ignore_all`: 로컬 전달 시 ICMP echo request이면 DROP
 
-| NAT 타입 | 변경 대상 | 프로토콜별 동작 |
-|---------|----------|--------------|
-| DNAT | dst_ip, dst_port | TCP/UDP/SCTP: IP+포트 변경. ICMP: IP만 변경 |
-| REDIRECT | dst_ip → ingress iface IP, dst_port | 같은 머신의 다른 포트로 전환 |
-| TPROXY | mark 설정, 패킷 Stolen | 투명 프록시로 전달 |
+### 3.12 LocalInput (INPUT 체인)
 
-**mark 변경:**
-```rust
-// mask 있는 경우: 특정 비트만 설정
-new_mark = (old_mark & !mask) | (value & mask)
-// mask 없는 경우: 전체 덮어쓰기
-new_mark = value
-```
+`PipelineStage::LocalInput`
 
-mangle PREROUTING에서 설정된 mark는 이후 라우팅 결정에 영향 (fwmark 기반 정책 라우팅).
+로컬 전달 경로. INPUT hook에 등록된 모든 체인을 우선순위 순으로 평가한다.
+통과 시 최종 verdict: **LocalDelivery**.
 
-**구현 파일**: `pipeline/prerouting.rs`, `pipeline/mod.rs` (`evaluate_chain`, `apply_nat`)
+### 3.13 Forward (FORWARD 체인)
 
----
+`PipelineStage::Forward`
 
-### 3.9 route_localnet 검사
+포워딩 경로. 실행 전에 `sysctl.ip_forward` / `sysctl.conf.{iface}.forwarding` 검사를 수행한다. 비활성이면 DROP.
 
-PREROUTING DNAT 이후, 라우팅 결정 이전에 dst_ip가 127.0.0.0/8인지 확인.
+FORWARD hook에 등록된 모든 체인을 우선순위 순으로 평가한다.
 
-```
-dst_ip ∈ 127.0.0.0/8 AND route_localnet=0 → DROP
-dst_ip ∈ 127.0.0.0/8 AND route_localnet=1 → 통과 (DNAT to localhost 허용)
-```
+### 3.14 PostRouting (POSTROUTING 체인)
 
-**사용 사례:** DNAT로 `127.0.0.1:8080`과 같은 로컬 서비스로 리다이렉트.
+`PipelineStage::PostRouting`
 
-**구현 파일**: `engine.rs` route_localnet 블록
+POSTROUTING hook에 등록된 체인 평가. SNAT, Masquerade 등이 여기서 적용된다.
+Ingress 포워딩 경로와 Output 경로 모두에서 사용된다.
+
+### 3.15 MtuCheck (MTU 검사)
+
+`PipelineStage::MtuCheck`
+
+egress 인터페이스의 MTU와 패킷 크기를 비교한다.
+
+| 조건 | 결과 |
+|------|------|
+| `pkt_len <= mtu` | 통과 |
+| `pkt_len > mtu` && `df_flag = true` | DROP (ICMP Fragmentation Needed 전송) |
+| `pkt_len > mtu` && `df_flag = false` | Continue (fragmentation 수행) |
+| `packet_length` 미지정 | Continue (검사 건너뜀) |
+
+### 3.16 ConntrackConfirm (Conntrack 확인)
+
+`PipelineStage::ConntrackConfirm`
+
+패킷이 성공적으로 전달/전송될 때 conntrack 엔트리를 확인(confirm)한다. 현재 구현에서는 정보 기록 단계.
+
+### 3.17 Output (OUTPUT 체인)
+
+`PipelineStage::Output`
+
+로컬 발신 패킷 전용. PREROUTING과 동일하게 RAW / post-conntrack으로 분할된다.
+
+- **Output RAW**: priority <= -200인 OUTPUT 체인
+- **Output post-CT**: priority > -200인 OUTPUT 체인 (mangle, filter, nat)
 
 ---
 
-### 3.10 ROUTING DECISION
+## 4. Netfilter 체인 평가
 
-패킷의 목적지를 결정하는 핵심 단계.
+### 4.1 체인 수집 (`collect_chains_for_hook`)
 
-**처리 순서:**
+지정된 hook(Prerouting, Input, Forward, Output, Postrouting)에 대해:
 
-```
-1. dst_ip가 로컬 인터페이스 주소인지 확인
-   └── 매칭 → LOCAL_DELIVERY
+1. **nftables**: 모든 테이블의 체인 중 `chain.hook == hook`인 것을 수집
+2. **iptables**: 모든 테이블의 체인 중 이름이 hook과 일치하는 것을 수집 (테이블별 기본 priority 사용)
+3. **priority 오름차순 정렬**
 
-2. ip rule 순회 (priority 오름차순)
-   ├── selector 매칭 (from, to, fwmark, iif, oif, ipproto, sport, dport)
-   │   fwmark 매칭: (packet_mark & fwmask) == fwmark
-   └── action 실행
-       ├── Lookup(table_id) → 3.
-       ├── Blackhole → DROP
-       ├── Unreachable → DROP
-       └── Prohibit → DROP
+### 4.2 PREROUTING 분할
 
-3. 라우팅 테이블에서 Longest Prefix Match
-   ├── 같은 prefix_len → metric 낮은 것 우선
-   └── Route Type에 따른 결정:
-       ├── Local → LOCAL_DELIVERY
-       ├── Broadcast → LOCAL_DELIVERY
-       ├── Unicast → FORWARD (egress_if, next_hop 설정)
-       ├── Blackhole → DROP
-       ├── Unreachable → DROP
-       ├── Prohibit → DROP
-       └── Throw → 다음 ip rule로 계속
-
-4. 매칭 없음 → "No route to host" DROP
-```
-
-**구현 파일**: `pipeline/routing.rs`
-
----
-
-### 3.11 LOCAL 경로: INPUT
-
-라우팅 결정이 LOCAL인 경우.
-
-**icmp_echo_ignore_all 검사:**
-- `sysctl.ipv4.icmp_echo_ignore_all=1`이고 패킷이 ICMP Echo Request (type=8 또는 ICMPv6 type=128)이면 DROP
-
-**INPUT 체인 평가:**
-- netfilter `input` hook의 모든 체인을 priority 순으로 평가
-- mangle → filter
-
-**최종 결과:** `LOCAL_DELIVERY` 또는 DROP/REJECT
-
-**구현 파일**: `pipeline/local_input.rs`, `engine.rs` LOCAL 분기
-
----
-
-### 3.12 FORWARD 경로: FORWARD + POSTROUTING
-
-라우팅 결정이 FORWARD인 경우.
-
-**Egress 인터페이스 검증:**
-- 존재 확인 (없으면 DROP)
-- 상태 확인 (DOWN이면 DROP)
-
-**ip_forward 검사:**
-- `sysctl.ipv4.ip_forward=0`이면 DROP
-- 인터페이스별 `forwarding` 오버라이드 가능
-
-**FORWARD 체인:**
-1. **TTL 감소** (IP 패킷만)
-   - `ttl = ttl.saturating_sub(1)`
-   - `ttl == 0` → DROP (ICMP Time Exceeded 전송)
-2. netfilter `forward` hook 체인 평가
-   - mangle → filter
-
-**POSTROUTING 체인:**
-- netfilter `postrouting` hook 체인 평가
-- mangle → nat (SNAT/MASQUERADE)
-
-| NAT 타입 | 변경 대상 | 동작 |
-|---------|----------|------|
-| SNAT | src_ip, src_port | 지정된 주소로 변경 |
-| MASQUERADE | src_ip → egress iface IP | IPv4/IPv6 주소 패밀리 매칭 |
-
-**MTU 검사:**
-- `packet_length > egress_iface.mtu` 인 경우:
-  - `df_flag=true` → DROP (ICMP Fragmentation Needed)
-  - `df_flag=false` → fragmentation 주석
-
-**Conntrack Confirm:**
-- 포워딩된 패킷의 conntrack 항목 확정
-
-**최종 결과:** `FORWARDED` 또는 DROP/REJECT
-
-**구현 파일**: `pipeline/forward.rs`, `pipeline/postrouting.rs`, `engine.rs` FORWARD 분기
-
----
-
-## 4. Netfilter 체인 평가 상세
-
-### 4.1 체인 수집
+PREROUTING과 OUTPUT은 conntrack 기준으로 분할된다.
 
 ```
-NetfilterConfig
-├── nftables: NftablesRuleset
-│   └── tables[]: NfTable
-│       └── chains[]: NfChain (hook, priority)
-└── iptables: IptablesRuleset
-    └── tables[]: IptablesTable
-        └── chains[]: IptablesChain (name → hook 매핑)
+모든 체인 수집 (collect_chains_for_hook)
+         |
+    partition by priority
+         |
+   +-----+-----+
+   |             |
+ <= -200       > -200
+  (RAW)    (mangle/nat/filter)
+   |             |
+ 평가 후      conntrack
+ 계속 진행    조회 후 평가
 ```
 
-동일 hook의 체인들을 병합 후 priority 오름차순 정렬.
+| 분류 | priority 범위 | 대표 테이블 |
+|------|--------------|------------|
+| RAW | <= -200 | raw (-300) |
+| post-conntrack | > -200 | mangle (-150), nat (-100), filter (0) |
 
-### 4.2 규칙 평가
+### 4.3 체인 평가 (`evaluate_chain`)
 
-```
-for rule in chain.rules:
-    if ALL(rule.matches) match packet_state:
-        execute rule.action
-        → Verdict(Accept/Drop/Reject/Continue)
-        → NAT(Dnat/Snat/Masquerade/Redirect/Tproxy)
-        → SetMark(value, mask)
-        → Log / Counter (비종료)
-        → Jump / Goto (서브체인)
-        → Return (체인 정책으로 복귀)
+체인 내 규칙을 순서대로 평가한다.
 
-no rule matched → apply chain.policy (Accept/Drop)
-```
+| 액션 | 동작 | 체인 중단 | 전체 중단 |
+|------|------|----------|----------|
+| Accept | 수락 | Yes | Yes |
+| Drop | 드롭 | Yes | Yes |
+| Reject | 거부 (ICMP unreachable) | Yes | Yes |
+| Continue | 다음 규칙으로 | No | No |
+| Queue | Stolen 처리 | Yes | Yes |
+| NAT (Dnat/Snat/Masq/Redirect/Tproxy) | 패킷 상태 변경 후 수락 | Yes | **No** (다음 체인 계속) |
+| SetMark | mark 변경 | No | No |
+| Log / Counter | 비종료 액션 | No | No |
+| Jump / Goto | 현재 구현: continue | No | No |
+| Return | 체인 정책으로 복귀 | Yes (규칙 루프) | No |
 
-### 4.3 매칭 조건 (NfMatch)
+**체인 정책(policy)**: 규칙에 매칭되지 않으면 체인 policy 적용.
+- Accept --> 다음 체인 계속 (전체 중단 아님)
+- Drop --> 전체 중단
 
-| 매칭 타입 | 필드 | 프로토콜 제약 |
-|----------|------|-------------|
-| `Ip` | saddr, daddr, protocol, version, dscp, ttl | IP 패킷만 |
-| `Transport` | sport, dport, flags, icmp_type, icmp_code | 프로토콜별 |
-| `Iif` | ingress 인터페이스 이름 | — |
-| `Oif` | egress 인터페이스 이름 | — |
-| `Meta` | mark, protocol, iifname, oifname, l4proto, nfproto | — |
-| `Ct` | state, mark, direction | — |
-| `Mark` | 패킷 mark (mask 지원) | — |
+### 4.4 NAT 액션
 
-**프로토콜별 L4 매칭:**
+| NAT 유형 | 변경 필드 | 플래그 |
+|----------|----------|--------|
+| Dnat { addr, port } | dst_ip, dst_port | dnat_applied |
+| Snat { addr, port } | src_ip, src_port | snat_applied |
+| Masquerade { port } | src_ip (egress IF의 IP), src_port | snat_applied |
+| Redirect { port } | dst_ip (ingress IF의 IP), dst_port | dnat_applied |
+| Tproxy { addr, port, mark } | dst_ip, dst_port, mark | dnat_applied, tproxy_applied |
 
-| 프로토콜 | 포트 매칭 | 특수 필드 |
-|---------|----------|----------|
-| TCP | sport, dport | flags (syn, ack, fin, rst, psh, urg) |
-| UDP | sport, dport | — |
-| SCTP | sport, dport | — |
-| ICMP | — (포트 없음) | icmp_type, icmp_code (이름 또는 숫자) |
-| ICMPv6 | — (포트 없음) | icmp_type, icmp_code (이름 또는 숫자) |
-| VRRP/OSPF/GRE/ESP/AH | — | — (IP 레벨만) |
-
-**포트 값 형식:**
-- 단일: `"80"`
-- 범위: `"1024-65535"`
-- 셋: `"22,80,443"`
-
-**IP 주소 값 형식:**
-- 단일: `"10.0.0.1"`
-- CIDR: `"10.0.0.0/24"`
-- 셋: `"10.0.0.1, 192.168.0.0/16"`
+- NAT 적용 시 `original_dst_ip/port` 또는 `original_src_ip/port`에 원본 값 보존
+- ICMP 등 포트가 없는 프로토콜에서는 port 변경을 건너뜀 (`has_ports()` 검사)
 
 ---
 
 ## 5. sysctl 커널 파라미터
 
-### 5.1 전역 설정
+### 5.1 전역 IPv4 파라미터 (`Ipv4Sysctl`)
 
-| 파라미터 | 기본값 | 체크 포인트 | 효과 |
-|---------|--------|-----------|------|
-| `ipv4.ip_forward` | true | FORWARD 전 | false→포워딩 차단 |
-| `ipv4.icmp_echo_ignore_all` | false | INPUT 전 | true→ICMP echo DROP |
-| `ipv4.icmp_echo_ignore_broadcasts` | true | — | 브로드캐스트 echo 무시 |
-| `ipv6.forwarding` | true | — | IPv6 포워딩 |
+| 파라미터 | 경로 | 기본값 | 설명 |
+|----------|------|--------|------|
+| `ip_forward` | `net.ipv4.ip_forward` | `true` | IP 포워딩 활성화 |
+| `icmp_echo_ignore_all` | `net.ipv4.icmp_echo_ignore_all` | `false` | 모든 ICMP echo 무시 |
+| `icmp_echo_ignore_broadcasts` | `net.ipv4.icmp_echo_ignore_broadcasts` | `true` | 브로드캐스트 ICMP echo 무시 |
+| `tcp_syncookies` | `net.ipv4.tcp_syncookies` | `true` | SYN cookies 활성화 |
 
-### 5.2 인터페이스별 설정
+### 5.2 전역 IPv6 파라미터 (`Ipv6Sysctl`)
 
-조회 순서: `interface_conf[iface]` → `interface_conf["all"]` → `interface_conf["default"]` → 빌트인 기본값
+| 파라미터 | 경로 | 기본값 | 설명 |
+|----------|------|--------|------|
+| `forwarding` | `net.ipv6.conf.all.forwarding` | `true` | IPv6 포워딩 |
 
-| 파라미터 | 기본값 | 체크 포인트 | 효과 |
-|---------|--------|-----------|------|
-| `forwarding` | None (전역 따름) | FORWARD 전 | 인터페이스별 포워딩 오버라이드 |
-| `route_localnet` | false | PREROUTING 후 | true→127.0.0.0/8 DNAT 허용 |
-| `rp_filter` | off | XDP 후 | strict/loose 역경로 검증 |
-| `accept_local` | false | — | 로컬 소스 주소 허용 |
-| `arp_ignore` | 0 | ARP 처리 | 0~2 레벨 ARP 응답 제어 |
-| `arp_announce` | 0 | — | ARP 요청 소스 IP 선택 |
-| `arp_filter` | false | — | ARP 필터링 |
-| `proxy_arp` | false | — | Proxy ARP |
-| `send_redirects` | true | — | ICMP redirect 전송 |
-| `log_martians` | false | — | 비정상 패킷 로깅 |
+### 5.3 브릿지 파라미터
 
-### 5.3 브릿지 설정
+| 파라미터 | 경로 | 기본값 | 설명 |
+|----------|------|--------|------|
+| `bridge_nf_call_iptables` | `net.bridge.bridge-nf-call-iptables` | `false` | 브릿지 패킷에 iptables 적용 |
+| `bridge_nf_call_ip6tables` | `net.bridge.bridge-nf-call-ip6tables` | `false` | 브릿지 IPv6 패킷에 ip6tables 적용 |
+| `bridge_nf_call_arptables` | `net.bridge.bridge-nf-call-arptables` | `false` | 브릿지 ARP 패킷에 arptables 적용 |
 
-| 파라미터 | 기본값 | 효과 |
-|---------|--------|------|
-| `bridge_nf_call_iptables` | false | 브릿지 패킷에 iptables 적용 |
-| `bridge_nf_call_ip6tables` | false | 브릿지 IPv6에 ip6tables 적용 |
-| `bridge_nf_call_arptables` | false | 브릿지 ARP에 arptables 적용 |
+### 5.4 인터페이스별 파라미터 (`InterfaceSysctl`)
+
+조회 순서: `interface_conf[iface]` --> `interface_conf["all"]` --> `interface_conf["default"]` --> 기본값
+
+| 파라미터 | 경로 | 기본값 | 설명 |
+|----------|------|--------|------|
+| `forwarding` | `conf.{iface}.forwarding` | `None` (전역 사용) | 인터페이스별 포워딩 오버라이드 |
+| `route_localnet` | `conf.{iface}.route_localnet` | `false` | 127.0.0.0/8 라우팅 허용 |
+| `rp_filter` | `conf.{iface}.rp_filter` | `Strict` | Reverse Path 필터링 (Off/Strict/Loose) |
+| `accept_local` | `conf.{iface}.accept_local` | `false` | 로컬 소스 주소 허용 |
+| `send_redirects` | `conf.{iface}.send_redirects` | `true` | ICMP redirect 전송 |
+| `log_martians` | `conf.{iface}.log_martians` | `false` | 비정상 패킷 로깅 |
+| `proxy_arp` | `conf.{iface}.proxy_arp` | `false` | Proxy ARP |
+| `proxy_arp_pvlan` | `conf.{iface}.proxy_arp_pvlan` | `false` | Private VLAN proxy ARP |
+| `arp_ignore` | `conf.{iface}.arp_ignore` | `0` | ARP 응답 제어 (0~8) |
+| `arp_announce` | `conf.{iface}.arp_announce` | `0` | ARP 소스 IP 선택 (0~2) |
+| `arp_filter` | `conf.{iface}.arp_filter` | `false` | ARP 필터링 |
+
+### 5.5 RpFilterMode
+
+| 값 | sysctl 값 | 동작 |
+|----|----------|------|
+| `Off` | 0 | 비활성화 |
+| `Strict` | 1 | 역라우팅 결과가 ingress IF와 동일해야 통과 |
+| `Loose` | 2 | 어떤 IF로든 역라우팅 가능하면 통과 |
 
 ---
 
 ## 6. 인터페이스 모델
 
-### 6.1 인터페이스 타입
+### 6.1 인터페이스 종류 (`InterfaceKind`)
 
-| Kind | 설명 | 특수 필드 |
-|------|------|----------|
-| Physical | 물리 NIC | — |
-| Loopback | 루프백 (lo) | — |
-| Veth | 가상 이더넷 페어 | `veth_peer` |
-| Bridge | 가상 브릿지 | `bridge_members` |
-| Vlan | VLAN 서브인터페이스 | `vlan_parent`, `vlan_id` |
-| Bond | 본딩 인터페이스 | `bond_members` |
-| Tun / Tap | 가상 터널 | — |
-| Wireguard | WireGuard VPN | — |
+| 종류 | 설명 | 비고 |
+|------|------|------|
+| `Loopback` | 루프백 (lo) | |
+| `Physical` | 물리 NIC | 프레임 크기 제한 적용 |
+| `Veth` | 가상 이더넷 페어 | `veth_peer` 필드로 피어 지정 |
+| `Bridge` | 브릿지 | `bridge_members` 필드로 멤버 목록 |
+| `Vlan` | VLAN 인터페이스 | `vlan_parent`, `vlan_id` 필드 |
+| `Bond` | 본딩 인터페이스 | `bond_members` 필드 |
+| `Tun` | TUN 터널 | |
+| `Tap` | TAP 터널 | |
+| `Wireguard` | WireGuard VPN | |
+| `Other(String)` | 기타 | |
 
-### 6.2 브릿지 멤버 관계
+### 6.2 인터페이스 필드
 
-```
-br0 (Bridge)
-├── bridge_members: ["eth0", "eth1"]
-│
-eth0 (Physical)
-├── master: "br0"    ← 브릿지 포트
-│
-eth1 (Physical)
-├── master: "br0"    ← 브릿지 포트
-```
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `name` | String | 인터페이스 이름 |
+| `index` | u32 | 인터페이스 인덱스 |
+| `mac` | Option\<String\> | MAC 주소 |
+| `addresses` | Vec\<InterfaceAddress\> | IP 주소 목록 (ip, prefix_len, scope) |
+| `mtu` | u32 | MTU (기본: 1500) |
+| `state` | InterfaceState | Up / Down |
+| `kind` | InterfaceKind | 인터페이스 종류 |
+| `veth_peer` | Option\<String\> | veth 피어 이름 |
+| `bridge_members` | Vec\<String\> | 브릿지 멤버 목록 |
+| `master` | Option\<String\> | 소속 브릿지 이름 |
+| `vlan_parent` | Option\<String\> | VLAN 부모 인터페이스 |
+| `vlan_id` | Option\<u16\> | VLAN ID |
+| `bond_members` | Vec\<String\> | 본딩 멤버 목록 |
 
-브릿지 멤버로 수신된 패킷은 `INTERFACE_CHECK`에서 브릿지 관계를 trace에 기록.
+### 6.3 주소 스코프 (`AddressScope`)
 
-### 6.3 인터페이스 속성
+| 스코프 | 설명 |
+|--------|------|
+| `Global` | 전역 (기본값) |
+| `Link` | 링크 로컬 |
+| `Host` | 호스트 로컬 |
 
-| 속성 | 용도 |
+---
+
+## 7. 패킷 상태 추적 (`PacketState`)
+
+파이프라인 전체에서 변이되는 가변 상태 구조체.
+
+### 7.1 L2 필드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `ethertype` | EtherType | 프레임 타입 (Ipv4, Ipv6, Arp, Vlan, Stp, Lldp, Other) |
+| `vlan_id` | Option\<u16\> | VLAN ID |
+| `src_mac` | Option\<String\> | 출발지 MAC |
+| `dst_mac` | Option\<String\> | 목적지 MAC |
+
+### 7.2 L3 필드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `src_ip` | Option\<IpAddr\> | 출발지 IP |
+| `dst_ip` | Option\<IpAddr\> | 목적지 IP |
+| `protocol` | IpProtocol | IP 프로토콜 (Tcp, Udp, Icmp, Icmpv6, Vrrp, Ospf, Gre, Esp, Ah, Sctp, Other) |
+| `ttl` | u8 | TTL (기본: 64) |
+| `dscp` | u8 | DSCP 값 |
+| `df_flag` | bool | Don't Fragment 플래그 |
+| `packet_length` | Option\<u32\> | 패킷 크기 (바이트) |
+
+### 7.3 L4 필드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `src_port` | Option\<u16\> | 출발지 포트 (TCP/UDP/SCTP) |
+| `dst_port` | Option\<u16\> | 목적지 포트 |
+| `tcp_flags` | Option\<TcpFlags\> | TCP 플래그 (syn, ack, fin, rst, psh, urg) |
+| `icmp_type` | Option\<u8\> | ICMP 타입 |
+| `icmp_code` | Option\<u8\> | ICMP 코드 |
+| `arp_op` | Option\<u16\> | ARP operation (1=req, 2=reply) |
+
+### 7.4 메타데이터 / 추적 필드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `mark` | u32 | 패킷 마크 (fwmark) |
+| `ct_mark` | u32 | conntrack 마크 |
+| `ct_state` | ConntrackState | conntrack 상태 (New, Established, Related, Invalid, Untracked) |
+| `ingress_if` | String | 수신 인터페이스 |
+| `egress_if` | Option\<String\> | 송신 인터페이스 (라우팅 후 결정) |
+
+### 7.5 NAT 추적 필드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `dnat_applied` | bool | DNAT 적용 여부 |
+| `snat_applied` | bool | SNAT 적용 여부 |
+| `tproxy_applied` | bool | TPROXY 적용 여부 |
+| `original_dst_ip` | Option\<IpAddr\> | NAT 이전 원본 목적지 IP |
+| `original_dst_port` | Option\<u16\> | NAT 이전 원본 목적지 포트 |
+| `original_src_ip` | Option\<IpAddr\> | NAT 이전 원본 출발지 IP |
+| `original_src_port` | Option\<u16\> | NAT 이전 원본 출발지 포트 |
+
+---
+
+## 8. 최종 판정 (`FinalVerdict`)
+
+| Verdict | 설명 | 발생 조건 |
+|---------|------|----------|
+| `Drop` | 패킷 폐기 | 규칙 DROP, 검증 실패, MTU+DF 등 |
+| `LocalDelivery` | 로컬 프로세스로 전달 | 라우팅 --> local, INPUT 통과 |
+| `Forwarded` | 다른 인터페이스로 포워딩 | FORWARD --> POSTROUTING --> MTU 통과 |
+| `Redirect` | XDP REDIRECT로 리다이렉트 | XDP redirect (다른 IF) |
+| `Tx` | XDP TX로 반사 | XDP redirect (같은 IF) |
+| `Rejected` | 패킷 거부 (ICMP 응답 전송) | 규칙 REJECT |
+| `Blackhole` | 블랙홀 라우트 | 라우팅에서 blackhole 매칭 |
+| `Tproxy` | TPROXY Stolen | Stolen decision |
+| `Sent` | 로컬 발신 패킷 전송 완료 | Output 경로 최종 성공 |
+
+---
+
+## 9. 세션 시뮬레이션 (`session_engine`)
+
+### 9.1 개요
+
+`SessionDef`를 받아 관련 패킷 시퀀스를 생성하고, 각 패킷을 `engine::run()`으로 순차 시뮬레이션한다. NAT 매핑이 reply 패킷에 자동으로 반영된다.
+
+### 9.2 세션 타입 (`SessionType`)
+
+| 타입 | 설명 |
 |------|------|
-| `name` | 인터페이스 식별자 (iif/oif 매칭) |
-| `index` | 인터페이스 인덱스 |
-| `mac` | MAC 주소 |
-| `addresses` | IP 주소 목록 (IPv4/IPv6, prefix_len, scope) |
-| `mtu` | Maximum Transmission Unit (MTU 검사) |
-| `state` | Up/Down (수신/전송 가능 여부) |
+| `TcpHandshake` | TCP 3-way handshake (+선택적 data/close) |
+| `IcmpPing` | ICMP echo request/reply |
+| `Custom` | 사용자 정의 패킷 시퀀스 |
 
----
+### 9.3 NAT 매핑
 
-## 7. 패킷 상태 추적
-
-### 7.1 PacketState 필드
-
-시뮬레이션 중 변경되는 가변 상태:
-
-| 필드 | 변경 시점 | 설명 |
-|------|----------|------|
-| `src_ip` / `dst_ip` | NAT (DNAT/SNAT) | IP 주소 |
-| `src_port` / `dst_port` | NAT | L4 포트 (TCP/UDP/SCTP만) |
-| `mark` | mangle SetMark | 패킷 mark (정책 라우팅에 영향) |
-| `ct_mark` | — | conntrack mark |
-| `ct_state` | conntrack lookup | 연결 추적 상태 |
-| `egress_if` | 라우팅 결정 | 출력 인터페이스 |
-| `ttl` | FORWARD | TTL 감소 |
-| `dnat_applied` / `snat_applied` | NAT | NAT 적용 여부 |
-| `original_dst_*` / `original_src_*` | NAT | NAT 전 원본 주소 |
-
-### 7.2 TraceStep 구조
-
-각 파이프라인 단계마다 기록:
+첫 번째 패킷(forward 방향) 시뮬레이션 후 NAT 매핑을 추출한다.
 
 ```
-TraceStep {
-    seq: 단계 번호
-    stage: 파이프라인 단계
-    state_before: 단계 진입 시 패킷 상태
-    state_after: 단계 완료 후 패킷 상태
-    state_changes: [{ field, from, to }]  ← 자동 diff
-    matched_rules: [{ source, table, chain, rule_index, summary }]
-    decision: Continue/Drop/Reject/Accept/...
-    explain: 자연어 설명
-}
+Forward: client(A:a) --> server(B:b)
+  DNAT 적용 --> B':b'
+  SNAT 적용 --> A':a'
+
+Reply: server(B':b') --> client(A':a')  (NAT 역변환 적용)
 ```
 
----
+reply 패킷에서는:
+- forward의 DNAT 역변환: reply의 `src_ip`가 original dst --> translated dst로 변경
+- forward의 SNAT 역변환: reply의 `dst_ip`가 original src --> translated src로 변경
 
-## 8. 최종 판정 (FinalVerdict)
+### 9.4 세션 판정 (`SessionVerdict`)
 
-| Verdict | 의미 |
-|---------|------|
-| `LocalDelivery` | 로컬 프로세스로 전달 |
-| `Forwarded` | 다른 인터페이스로 포워딩 |
-| `Drop` | 패킷 폐기 (무응답) |
-| `Rejected` | 패킷 거부 (ICMP unreachable 응답) |
-| `Blackhole` | 블랙홀 라우트에 의한 폐기 |
-| `Tx` | XDP TX — 수신 인터페이스로 반사 |
-| `Redirect` | XDP REDIRECT — 다른 인터페이스로 전환 |
-| `Tproxy` | 투명 프록시로 패킷 전달 |
+| 판정 | 조건 |
+|------|------|
+| `Established` | 모든 패킷이 성공 |
+| `Failed { failed_at, reason }` | 특정 패킷에서 터미널 verdict (Drop/Rejected/Blackhole) |
+| `Partial { passed, total }` | 일부만 통과 |
 
----
-
-## 9. 세션 시뮬레이션
-
-단일 패킷이 아닌 세션(연결) 단위의 시뮬레이션을 지원한다.
-
-### 9.1 세션 타입
-
-| 타입 | 패킷 시퀀스 | conntrack 상태 |
-|------|-----------|---------------|
-| TCP Handshake | SYN → SYN-ACK → ACK (+DATA, +FIN) | NEW → ESTABLISHED → ESTABLISHED |
-| ICMP Echo | Echo Request → Echo Reply | NEW → ESTABLISHED |
-| UDP Exchange | Request → Reply | NEW → ESTABLISHED |
-| Custom | 사용자 정의 시퀀스 | 사용자 지정 |
-
-### 9.2 NAT 매핑 전파
-
-Forward 패킷에서 DNAT/SNAT가 적용되면, Reply 패킷의 주소가 자동 조정된다.
-
-```
-Forward: client(A) → VIP(B:80) ──DNAT──→ backend(B':8080)
-Reply:   세션 정의상 VIP(B:80) → client(A)
-         NAT 매핑 적용 후: backend(B':8080) → client(A)
-```
-
-### 9.3 세션 판정
-
-| Verdict | 조건 |
-|---------|------|
-| `Established` | 모든 패킷이 성공적으로 전달 |
-| `Failed` | 특정 패킷에서 DROP/REJECT (세션 중단) |
-| `Partial` | 일부만 통과 |
+터미널 verdict(Drop, Rejected, Blackhole) 발생 시 세션 시뮬레이션을 즉시 중단한다.

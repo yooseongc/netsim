@@ -99,6 +99,8 @@ impl std::fmt::Display for PipelineStage {
 pub enum StageDecision {
     Continue,
     Drop { reason: String },
+    /// REJECT — 패킷 거부 (ICMP unreachable 응답 전송)
+    Reject { reason: String },
     Accept,
     Stolen,
     Redirect { target: String },

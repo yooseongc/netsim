@@ -248,16 +248,16 @@ fn match_tcp_flags(
     flags: &crate::model::packet::TcpFlags,
 ) -> bool {
     // value: "syn", "syn,ack", "syn & syn,ack" 등
-    let flag_names: Vec<&str> = value.split(',').map(|s| s.trim().to_ascii_lowercase().leak() as &str).collect();
-
-    let has_all = flag_names.iter().all(|name| match *name {
-        "syn" => flags.syn,
-        "ack" => flags.ack,
-        "fin" => flags.fin,
-        "rst" => flags.rst,
-        "psh" => flags.psh,
-        "urg" => flags.urg,
-        _ => false,
+    let has_all = value.split(',').map(|s| s.trim()).all(|name| {
+        match name.to_ascii_lowercase().as_str() {
+            "syn" => flags.syn,
+            "ack" => flags.ack,
+            "fin" => flags.fin,
+            "rst" => flags.rst,
+            "psh" => flags.psh,
+            "urg" => flags.urg,
+            _ => false,
+        }
     });
 
     match op {
@@ -670,6 +670,142 @@ mod tests {
             value: "tcp".to_string(),
         };
         assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_ip_neq() {
+        let state = make_tcp_state();
+        let m = NfMatch::Ip {
+            field: IpField::Saddr,
+            op: MatchOp::Neq,
+            value: "192.168.1.1".to_string(),
+        };
+        assert!(evaluate_match(&m, &state)); // src is 10.0.0.1, not 192.168.1.1
+    }
+
+    #[test]
+    fn test_ip_addr_set_in() {
+        let state = make_tcp_state(); // dst=192.168.1.1
+        let m = NfMatch::Ip {
+            field: IpField::Daddr,
+            op: MatchOp::In,
+            value: "10.0.0.1, 192.168.1.0/24, 172.16.0.0/12".to_string(),
+        };
+        assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_tcp_flags_syn_ack() {
+        let mut state = make_tcp_state();
+        state.tcp_flags = Some(TcpFlags { syn: true, ack: true, ..Default::default() });
+        let m = NfMatch::Transport {
+            protocol: TransportProto::Tcp,
+            field: TransportField::Flags,
+            op: MatchOp::Eq,
+            value: "syn,ack".to_string(),
+        };
+        assert!(evaluate_match(&m, &state));
+
+        // syn만 요구하는 매칭도 성공해야 함 (has_all 로직)
+        let m2 = NfMatch::Transport {
+            protocol: TransportProto::Tcp,
+            field: TransportField::Flags,
+            op: MatchOp::Eq,
+            value: "syn".to_string(),
+        };
+        assert!(evaluate_match(&m2, &state));
+    }
+
+    #[test]
+    fn test_port_set_match() {
+        let state = make_tcp_state(); // dst_port=80
+        let m = NfMatch::Transport {
+            protocol: TransportProto::Tcp,
+            field: TransportField::Dport,
+            op: MatchOp::In,
+            value: "22,80,443".to_string(),
+        };
+        assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_port_set_no_match() {
+        let state = make_tcp_state(); // dst_port=80
+        let m = NfMatch::Transport {
+            protocol: TransportProto::Tcp,
+            field: TransportField::Dport,
+            op: MatchOp::In,
+            value: "22,443,8080".to_string(),
+        };
+        assert!(!evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_icmpv6_type_name() {
+        let mut state = make_icmp_state();
+        state.protocol = IpProtocol::Icmpv6;
+        state.icmp_type = Some(128); // echo-request for ICMPv6
+        let m = NfMatch::Transport {
+            protocol: TransportProto::Icmpv6,
+            field: TransportField::IcmpType,
+            op: MatchOp::Eq,
+            value: "echo-request".to_string(),
+        };
+        assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_meta_l4proto_numeric() {
+        let state = make_tcp_state();
+        let m = NfMatch::Meta {
+            key: MetaKey::L4proto,
+            op: MatchOp::Eq,
+            value: "6".to_string(), // TCP = 6
+        };
+        assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_ct_mark_hex() {
+        let mut state = make_tcp_state();
+        state.ct_mark = 0x1234;
+        let m = NfMatch::Ct {
+            key: CtKey::Mark,
+            op: MatchOp::Eq,
+            value: "0x1234".to_string(),
+        };
+        assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_l2_only_packet_ip_match_fails() {
+        let mut state = make_tcp_state();
+        state.ethertype = EtherType::Arp;
+        state.src_ip = None;
+        state.dst_ip = None;
+        let m = NfMatch::Ip {
+            field: IpField::Saddr,
+            op: MatchOp::Eq,
+            value: "10.0.0.0/8".to_string(),
+        };
+        assert!(!evaluate_match(&m, &state)); // ARP → IP 없음 → 매칭 실패
+    }
+
+    #[test]
+    fn test_ttl_match() {
+        let state = make_tcp_state(); // ttl=64
+        let m = NfMatch::Ip {
+            field: IpField::Ttl,
+            op: MatchOp::Gt,
+            value: "1".to_string(),
+        };
+        assert!(evaluate_match(&m, &state));
+    }
+
+    #[test]
+    fn test_empty_matches_always_true() {
+        let state = make_tcp_state();
+        assert!(evaluate_matches(&[], &state)); // catch-all rule
     }
 
     #[test]

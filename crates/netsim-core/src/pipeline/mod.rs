@@ -172,7 +172,7 @@ pub fn evaluate_chain(
                 }
                 NfVerdict::Reject => {
                     return ChainEvalResult {
-                        decision: Some(StageDecision::Drop {
+                        decision: Some(StageDecision::Reject {
                             reason: format!(
                                 "Rejected by {} {}/{}",
                                 source_label(&chain.source),
@@ -456,6 +456,14 @@ pub fn evaluate_netfilter_hook(
             match &decision {
                 StageDecision::Drop { reason } => {
                     explanations.push(format!("DROP: {}", reason));
+                    return StageResult {
+                        decision,
+                        matched_rules: all_matched,
+                        explain: explanations.join("; "),
+                    };
+                }
+                StageDecision::Reject { reason } => {
+                    explanations.push(format!("REJECT: {}", reason));
                     return StageResult {
                         decision,
                         matched_rules: all_matched,

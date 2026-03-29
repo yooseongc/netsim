@@ -835,6 +835,764 @@ fn test_vrrp_local_delivery() {
 }
 
 // ============================================================
+// 시나리오 14: REJECT (Reject ≠ Drop)
+// ============================================================
+#[test]
+fn test_reject_verdict() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "filter".to_string(),
+                chains: vec![NfChain {
+                    name: "input".to_string(),
+                    chain_type: Some(NfChainType::Filter),
+                    hook: Some(NfHook::Input),
+                    priority: Some(0),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: Some("reject ssh".to_string()),
+                        matches: vec![NfMatch::Transport {
+                            protocol: TransportProto::Tcp,
+                            field: TransportField::Dport,
+                            op: MatchOp::Eq,
+                            value: "22".to_string(),
+                        }],
+                        action: NfAction::Verdict { verdict: NfVerdict::Reject },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "reject-ssh".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(22),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Rejected); // Rejected, not Drop!
+}
+
+// ============================================================
+// 시나리오 15: 체인 기본 정책 DROP (규칙 없이)
+// ============================================================
+#[test]
+fn test_chain_default_policy_drop() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "filter".to_string(),
+                chains: vec![NfChain {
+                    name: "input".to_string(),
+                    chain_type: Some(NfChainType::Filter),
+                    hook: Some(NfHook::Input),
+                    priority: Some(0),
+                    policy: Some(NfVerdict::Drop), // 정책 DROP, 규칙 없음
+                    rules: vec![],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "default-drop".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+}
+
+// ============================================================
+// 시나리오 16: iptables 규칙 (nftables 아닌)
+// ============================================================
+#[test]
+fn test_iptables_rules() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: None,
+        iptables: Some(IptablesRuleset {
+            tables: vec![IptablesTable {
+                name: "filter".to_string(),
+                chains: vec![IptablesChain {
+                    name: "FORWARD".to_string(),
+                    policy: Some(NfVerdict::Drop),
+                    rules: vec![
+                        NfRule {
+                            handle: None,
+                            comment: Some("allow established".to_string()),
+                            matches: vec![NfMatch::Ct {
+                                key: CtKey::State,
+                                op: MatchOp::In,
+                                value: "established,related".to_string(),
+                            }],
+                            action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                        },
+                        NfRule {
+                            handle: None,
+                            comment: Some("allow from eth0 to eth1".to_string()),
+                            matches: vec![
+                                NfMatch::Iif { name: "eth0".to_string() },
+                                NfMatch::Oif { name: "eth1".to_string() },
+                            ],
+                            action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                        },
+                    ],
+                }],
+            }],
+        }),
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "iptables-forward".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("192.168.1.100".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // eth0→eth1 규칙에 매칭되어 포워딩 허용
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+}
+
+// ============================================================
+// 시나리오 17: 다중 체인 우선순위 (mangle + filter)
+// ============================================================
+#[test]
+fn test_multiple_chains_priority_order() {
+    let (rules, tables) = default_routing();
+    // mangle(-150) 에서 mark 설정 → filter(0)에서 mark 기반 DROP
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![
+                NfTable {
+                    family: NfFamily::Ip,
+                    name: "mangle".to_string(),
+                    chains: vec![NfChain {
+                        name: "input".to_string(),
+                        chain_type: Some(NfChainType::Mangle),
+                        hook: Some(NfHook::Input),
+                        priority: Some(-150),
+                        policy: Some(NfVerdict::Accept),
+                        rules: vec![NfRule {
+                            handle: None,
+                            comment: None,
+                            matches: vec![NfMatch::Transport {
+                                protocol: TransportProto::Tcp,
+                                field: TransportField::Dport,
+                                op: MatchOp::Eq,
+                                value: "4444".to_string(),
+                            }],
+                            action: NfAction::SetMark { value: 0xdead, mask: None },
+                        }],
+                    }],
+                },
+                NfTable {
+                    family: NfFamily::Ip,
+                    name: "filter".to_string(),
+                    chains: vec![NfChain {
+                        name: "input".to_string(),
+                        chain_type: Some(NfChainType::Filter),
+                        hook: Some(NfHook::Input),
+                        priority: Some(0),
+                        policy: Some(NfVerdict::Accept),
+                        rules: vec![NfRule {
+                            handle: None,
+                            comment: None,
+                            matches: vec![NfMatch::Mark {
+                                op: MatchOp::Eq,
+                                value: 0xdead,
+                                mask: None,
+                            }],
+                            action: NfAction::Verdict { verdict: NfVerdict::Drop },
+                        }],
+                    }],
+                },
+            ],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "multi-chain-prio".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(4444),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // mangle(-150) → mark=0xdead, filter(0) → mark 매칭 → DROP
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+}
+
+// ============================================================
+// 시나리오 18: Established 연결은 방화벽 통과
+// ============================================================
+#[test]
+fn test_established_passes_firewall() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "filter".to_string(),
+                chains: vec![NfChain {
+                    name: "forward".to_string(),
+                    chain_type: Some(NfChainType::Filter),
+                    hook: Some(NfHook::Forward),
+                    priority: Some(0),
+                    policy: Some(NfVerdict::Drop),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Ct {
+                            key: CtKey::State,
+                            op: MatchOp::In,
+                            value: "established,related".to_string(),
+                        }],
+                        action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "established".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("192.168.1.100".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(80),
+            dst_port: Some(54321),
+            tcp_flags: Some(TcpFlags { ack: true, ..Default::default() }),
+            conntrack_state: ConntrackState::Established,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+}
+
+// ============================================================
+// 시나리오 19: REDIRECT NAT (dst_ip → 수신 인터페이스 IP)
+// ============================================================
+#[test]
+fn test_redirect_nat() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "prerouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Prerouting),
+                    priority: Some(-100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Transport {
+                            protocol: TransportProto::Tcp,
+                            field: TransportField::Dport,
+                            op: MatchOp::Eq,
+                            value: "8080".to_string(),
+                        }],
+                        action: NfAction::Nat(NatAction::Redirect { port: Some(80) }),
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "redirect".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(8080),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+    // REDIRECT: dst_ip → ingress if의 IP (eth0=10.0.0.1), dst_port → 80
+    let last_state = &result.trace.last().unwrap().state_after;
+    assert_eq!(last_state.dst_ip, Some("10.0.0.1".parse::<IpAddr>().unwrap()));
+    assert_eq!(last_state.dst_port, Some(80));
+    assert!(last_state.dnat_applied);
+}
+
+// ============================================================
+// 시나리오 20: IPv6 패킷
+// ============================================================
+#[test]
+fn test_ipv6_local_delivery() {
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: None,
+            addresses: vec![
+                InterfaceAddress {
+                    ip: "10.0.0.1".parse().unwrap(),
+                    prefix_len: 24,
+                    scope: AddressScope::Global,
+                },
+                InterfaceAddress {
+                    ip: "fd00::1".parse().unwrap(),
+                    prefix_len: 64,
+                    scope: AddressScope::Global,
+                },
+            ],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+        },
+    ];
+    let rules = vec![IpRule {
+        priority: 0,
+        selector: RuleSelector::default(),
+        action: RuleAction::Lookup(255),
+    }];
+    let tables = vec![RoutingTable {
+        id: 255,
+        name: Some("local".to_string()),
+        routes: vec![Route {
+            destination: "fd00::1/128".parse().unwrap(),
+            route_type: RouteType::Local,
+            dev: Some("eth0".to_string()),
+            ..default_route()
+        }],
+    }];
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "ipv6".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv6,
+            src_ip: Some("fd00::100".parse().unwrap()),
+            dst_ip: Some("fd00::1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(443),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 시나리오 21: ICMPv6 Neighbour Solicitation
+// ============================================================
+#[test]
+fn test_icmpv6_neighbour_solicitation() {
+    let interfaces = vec![Interface {
+        name: "eth0".to_string(),
+        index: 2,
+        mac: None,
+        addresses: vec![InterfaceAddress {
+            ip: "fd00::1".parse().unwrap(),
+            prefix_len: 64,
+            scope: AddressScope::Global,
+        }],
+        mtu: 1500,
+        state: InterfaceState::Up,
+        kind: InterfaceKind::Physical,
+    }];
+    let rules = vec![IpRule {
+        priority: 0,
+        selector: RuleSelector::default(),
+        action: RuleAction::Lookup(254),
+    }];
+    let tables = vec![RoutingTable {
+        id: 254,
+        name: Some("main".to_string()),
+        routes: vec![Route {
+            destination: "fd00::/64".parse().unwrap(),
+            dev: Some("eth0".to_string()),
+            scope: RouteScope::Link,
+            ..default_route()
+        }],
+    }];
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "icmpv6-ns".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv6,
+            src_ip: Some("fd00::100".parse().unwrap()),
+            dst_ip: Some("fd00::1".parse().unwrap()),
+            protocol: IpProtocol::Icmpv6,
+            icmp_type: Some(135), // Neighbour Solicitation
+            icmp_code: Some(0),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // fd00::1 은 로컬 인터페이스 주소
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 시나리오 22: XDP TX (같은 인터페이스로 반사)
+// ============================================================
+#[test]
+fn test_xdp_tx() {
+    let (rules, tables) = default_routing();
+    let xdp = XdpConfig {
+        programs: vec![XdpProgram {
+            interface: "eth0".to_string(),
+            mode: XdpMode::Generic,
+            rules: vec![],
+            default_action: XdpAction::Tx,
+        }],
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "xdp-tx".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Tx); // TX, not Redirect!
+}
+
+// ============================================================
+// 시나리오 23: next_hop 추출 검증
+// ============================================================
+#[test]
+fn test_next_hop_in_summary() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "next-hop".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth1".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("192.168.1.100".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+    // default route via 10.0.0.254
+    assert_eq!(result.summary.next_hop, Some("10.0.0.254".parse::<IpAddr>().unwrap()));
+}
+
+// ============================================================
+// 시나리오 24: Neq (부정 매칭)
+// ============================================================
+#[test]
+fn test_neq_match() {
+    let (rules, tables) = default_routing();
+    // "NOT from eth1" → accept, 나머지 → drop
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "filter".to_string(),
+                chains: vec![NfChain {
+                    name: "input".to_string(),
+                    chain_type: Some(NfChainType::Filter),
+                    hook: Some(NfHook::Input),
+                    priority: Some(0),
+                    policy: Some(NfVerdict::Drop),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: Some("accept if NOT from lo".to_string()),
+                        matches: vec![NfMatch::Iif { name: "lo".to_string() }],
+                        action: NfAction::Verdict { verdict: NfVerdict::Drop },
+                    }, NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![],
+                        action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "neq-match".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // eth0 != lo 이므로 첫 규칙 스킵, 두 번째 규칙(catch-all) accept
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 시나리오 25: STP 패킷 (L2-only, XDP pass)
+// ============================================================
+#[test]
+fn test_stp_packet() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "stp".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Stp,
+            src_ip: None,
+            dst_ip: None,
+            protocol: IpProtocol::Other(0),
+            conntrack_state: ConntrackState::Untracked,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+    assert!(result.trace.len() == 2); // XDP + L2 bypass
+}
+
+// ============================================================
+// 시나리오 26: nftables + iptables 혼용
+// ============================================================
+#[test]
+fn test_nftables_and_iptables_mixed() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "myfilter".to_string(),
+                chains: vec![NfChain {
+                    name: "input".to_string(),
+                    chain_type: Some(NfChainType::Filter),
+                    hook: Some(NfHook::Input),
+                    priority: Some(10), // nft priority 10
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![],
+                }],
+            }],
+        }),
+        iptables: Some(IptablesRuleset {
+            tables: vec![IptablesTable {
+                name: "filter".to_string(),
+                chains: vec![IptablesChain {
+                    name: "INPUT".to_string(),
+                    policy: Some(NfVerdict::Drop), // iptables filter priority=0 (< nft 10)
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Transport {
+                            protocol: TransportProto::Tcp,
+                            field: TransportField::Dport,
+                            op: MatchOp::Eq,
+                            value: "80".to_string(),
+                        }],
+                        action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                    }],
+                }],
+            }],
+        }),
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "mixed-nft-ipt".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // iptables filter(prio=0) → dport 80 accept → nft(prio=10) → accept policy
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
 // Helper
 // ============================================================
 fn default_packet_def() -> PacketDef {

@@ -37,8 +37,20 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     let result = pipeline::xdp::execute(&scenario.xdp, &mut state);
     trace.push(make_trace_step(seq, PipelineStage::Xdp, &state_before, &state, &result));
     all_matched_rules.extend(result.matched_rules.clone());
-    if let Some(verdict) = terminal_verdict(&result.decision) {
-        return finalize(scenario, trace, all_matched_rules, verdict, &state);
+    // XDP terminal: DROP, TX(=Redirect to same if), REDIRECT(=Redirect to other if)
+    match &result.decision {
+        StageDecision::Drop { .. } => {
+            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+        }
+        StageDecision::Redirect { target } => {
+            let verdict = if *target == state.ingress_if {
+                FinalVerdict::Tx
+            } else {
+                FinalVerdict::Redirect
+            };
+            return finalize(scenario, trace, all_matched_rules, verdict, &state);
+        }
+        _ => {} // Continue, Accept → 다음 단계로
     }
 
     // L2-only 패킷은 XDP 이후 netfilter/routing 건너뛰기
@@ -160,8 +172,10 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::Forwarded, &state)
         }
         StageDecision::Drop { .. } => {
-            let verdict = terminal_verdict(&result.decision).unwrap_or(FinalVerdict::Drop);
-            finalize(scenario, trace, all_matched_rules, verdict, &state)
+            finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state)
+        }
+        StageDecision::Reject { .. } => {
+            finalize(scenario, trace, all_matched_rules, FinalVerdict::Rejected, &state)
         }
         StageDecision::Stolen => {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::Tproxy, &state)
@@ -170,7 +184,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::Redirect, &state)
         }
         _ => {
-            // Continue 등 예상치 못한 결정 — unreachable로 처리
+            // Continue, Accept 등 routing에서 예상치 못한 결정
             finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state)
         }
     }
@@ -180,6 +194,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
 fn terminal_verdict(decision: &StageDecision) -> Option<FinalVerdict> {
     match decision {
         StageDecision::Drop { .. } => Some(FinalVerdict::Drop),
+        StageDecision::Reject { .. } => Some(FinalVerdict::Rejected),
         StageDecision::Stolen => Some(FinalVerdict::Tproxy),
         StageDecision::Redirect { .. } => Some(FinalVerdict::Redirect),
         _ => None,
@@ -196,13 +211,21 @@ fn finalize(
 ) -> SimulationResult {
     let nat_applied = state.dnat_applied || state.snat_applied;
 
+    // routing 단계에서 next_hop 추출
+    let next_hop = trace.iter()
+        .find(|s| matches!(s.stage, PipelineStage::RoutingDecision))
+        .and_then(|s| match &s.decision {
+            StageDecision::ForwardTo { next_hop, .. } => *next_hop,
+            _ => None,
+        });
+
     SimulationResult {
         id: Uuid::new_v4().to_string(),
         verdict: verdict.clone(),
         summary: SimulationSummary {
             verdict,
             egress_interface: state.egress_if.clone(),
-            next_hop: None, // trace의 routing 단계에서 추출 가능
+            next_hop,
             matched_rules: matched_rules.clone(),
             nat_applied,
             total_steps: trace.len(),

@@ -149,7 +149,14 @@ pub enum TransportProto {
 pub enum TransportField {
     Sport,
     Dport,
+    /// TCP flags (syn, ack, fin, rst, psh, urg)
     Flags,
+    /// ICMP/ICMPv6 type
+    #[serde(rename = "icmp_type")]
+    IcmpType,
+    /// ICMP/ICMPv6 code
+    #[serde(rename = "icmp_code")]
+    IcmpCode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

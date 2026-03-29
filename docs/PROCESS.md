@@ -2,7 +2,7 @@
 
 ## 현재 단계
 
-**2단계: 프로젝트 초기화** — 완료
+**4단계: 시뮬레이션 엔진 구현** — 완료
 
 ---
 
@@ -20,6 +20,11 @@
 - [x] Rust workspace 초기화 (3 crates + IR 모델 정의 + 컴파일 확인)
 - [x] Frontend scaffold 생성 (React + TypeScript + Vite + Tailwind + 빌드 확인)
 - [x] Dockerfile 작성 (멀티스테이지)
+- [x] 패킷 모델 보강 (ICMP type/code, ARP, L2 프로토콜, VRRP/OSPF/GRE 등)
+- [x] matcher.rs 룰 매칭 엔진 구현 (프로토콜별 L4 분기, 15개 단위 테스트)
+- [x] 파이프라인 전 단계 구현 (xdp, tc, prerouting, routing, input, forward, postrouting)
+- [x] engine.rs 시뮬레이션 오케스트레이터 구현
+- [x] 통합 테스트 13개 시나리오 (TCP/UDP/ICMP/ARP/VRRP, DNAT, SNAT, XDP, 정책라우팅, TTL, blackhole)
 
 ---
 
@@ -29,8 +34,8 @@
 |------|------|------|
 | 1단계 | 설계 문서 작성 | 완료 |
 | 2단계 | 프로젝트 초기화 (Rust workspace + Frontend + Docker) | 완료 |
-| 3단계 | 코어 모델 구현 (netsim-core IR) | 대기 |
-| 4단계 | 시뮬레이션 엔진 구현 | 대기 |
+| 3단계 | 코어 모델 구현 (netsim-core IR) | 완료 |
+| 4단계 | 시뮬레이션 엔진 구현 | 완료 |
 | 5단계 | 파서 구현 (netsim-parser) | 대기 |
 | 6단계 | 웹 서버 구현 (netsim-server) | 대기 |
 | 7단계 | 프론트엔드 구현 | 대기 |

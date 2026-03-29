@@ -138,15 +138,15 @@ pub fn compute_state_changes(before: &PacketState, after: &PacketState) -> Vec<S
     if before.src_ip != after.src_ip {
         changes.push(StateChange {
             field: "src_ip".to_string(),
-            from: before.src_ip.to_string(),
-            to: after.src_ip.to_string(),
+            from: format!("{:?}", before.src_ip),
+            to: format!("{:?}", after.src_ip),
         });
     }
     if before.dst_ip != after.dst_ip {
         changes.push(StateChange {
             field: "dst_ip".to_string(),
-            from: before.dst_ip.to_string(),
-            to: after.dst_ip.to_string(),
+            from: format!("{:?}", before.dst_ip),
+            to: format!("{:?}", after.dst_ip),
         });
     }
     if before.src_port != after.src_port {

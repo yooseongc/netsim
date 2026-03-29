@@ -24,6 +24,8 @@ pub enum FinalVerdict {
     Rejected,
     Blackhole,
     Tproxy,
+    /// 로컬 발신 패킷이 성공적으로 전송됨
+    Sent,
 }
 
 impl std::fmt::Display for FinalVerdict {
@@ -37,6 +39,7 @@ impl std::fmt::Display for FinalVerdict {
             FinalVerdict::Rejected => write!(f, "REJECTED"),
             FinalVerdict::Blackhole => write!(f, "BLACKHOLE"),
             FinalVerdict::Tproxy => write!(f, "TPROXY"),
+            FinalVerdict::Sent => write!(f, "SENT"),
         }
     }
 }
@@ -86,6 +89,12 @@ pub enum PipelineStage {
     /// MTU 검사
     MtuCheck,
     ConntrackConfirm,
+    /// PREROUTING RAW 테이블 (conntrack 이전)
+    PreRoutingRaw,
+    /// Bridge L2 포워딩
+    BridgeForward,
+    /// OUTPUT 체인 (로컬 발신 패킷)
+    Output,
 }
 
 impl std::fmt::Display for PipelineStage {
@@ -105,6 +114,9 @@ impl std::fmt::Display for PipelineStage {
             PipelineStage::PostRouting => write!(f, "POSTROUTING"),
             PipelineStage::MtuCheck => write!(f, "MTU_CHECK"),
             PipelineStage::ConntrackConfirm => write!(f, "CONNTRACK_CONFIRM"),
+            PipelineStage::PreRoutingRaw => write!(f, "PREROUTING_RAW"),
+            PipelineStage::BridgeForward => write!(f, "BRIDGE_FORWARD"),
+            PipelineStage::Output => write!(f, "OUTPUT"),
         }
     }
 }
@@ -258,6 +270,13 @@ pub fn compute_state_changes(before: &PacketState, after: &PacketState) -> Vec<S
             field: "snat_applied".to_string(),
             from: before.snat_applied.to_string(),
             to: after.snat_applied.to_string(),
+        });
+    }
+    if before.tproxy_applied != after.tproxy_applied {
+        changes.push(StateChange {
+            field: "tproxy_applied".to_string(),
+            from: before.tproxy_applied.to_string(),
+            to: after.tproxy_applied.to_string(),
         });
     }
     if before.protocol != after.protocol {

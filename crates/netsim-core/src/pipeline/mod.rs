@@ -360,6 +360,7 @@ pub fn apply_nat(
                 state.mark = *m;
             }
             state.dnat_applied = true;
+            state.tproxy_applied = true;
         }
     }
 }
@@ -500,6 +501,99 @@ pub fn evaluate_netfilter_hook(
         matched_rules: all_matched,
         explain: if explanations.is_empty() {
             format!("Passed through all {} chains", hook_label(hook))
+        } else {
+            explanations.join("; ")
+        },
+    }
+}
+
+/// 사전 필터링된 체인 목록을 평가하는 함수 (prerouting split 등에서 사용)
+pub fn evaluate_chains_subset(
+    chains: &[OrderedChain],
+    label: &str,
+    state: &mut PacketState,
+    interfaces: &[crate::model::interface::Interface],
+) -> StageResult {
+    // L2-only 패킷은 netfilter를 건너뛴다
+    if state.ethertype.is_l2_only() {
+        return StageResult::pass(format!(
+            "L2-only packet ({}) bypasses netfilter {}",
+            state.ethertype, label
+        ));
+    }
+
+    if chains.is_empty() {
+        return StageResult::pass(format!(
+            "No {} chains configured", label
+        ));
+    }
+
+    let mut all_matched = Vec::new();
+    let mut explanations = Vec::new();
+
+    for chain in chains {
+        let result = evaluate_chain(chain, state, interfaces);
+        all_matched.extend(result.matched_rules);
+
+        if let Some(decision) = result.decision {
+            match &decision {
+                StageDecision::Drop { reason } => {
+                    explanations.push(format!("DROP: {}", reason));
+                    return StageResult {
+                        decision,
+                        matched_rules: all_matched,
+                        explain: explanations.join("; "),
+                    };
+                }
+                StageDecision::Reject { reason } => {
+                    explanations.push(format!("REJECT: {}", reason));
+                    return StageResult {
+                        decision,
+                        matched_rules: all_matched,
+                        explain: explanations.join("; "),
+                    };
+                }
+                StageDecision::Stolen => {
+                    explanations.push("Packet stolen (QUEUE)".to_string());
+                    return StageResult {
+                        decision,
+                        matched_rules: all_matched,
+                        explain: explanations.join("; "),
+                    };
+                }
+                StageDecision::Accept => {
+                    explanations.push(format!(
+                        "Accepted by {} {}/{}",
+                        source_label(&chain.source),
+                        chain.table_name,
+                        chain.chain_name
+                    ));
+                    if result.stop {
+                        return StageResult {
+                            decision: StageDecision::Continue,
+                            matched_rules: all_matched,
+                            explain: explanations.join("; "),
+                        };
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            explanations.push(format!(
+                "Passed through {} {}/{} (policy: {:?})",
+                source_label(&chain.source),
+                chain.table_name,
+                chain.chain_name,
+                chain.policy
+            ));
+        }
+    }
+
+    StageResult {
+        decision: StageDecision::Continue,
+        matched_rules: all_matched,
+        explain: if explanations.is_empty() {
+            format!("Passed through all {} chains", label)
         } else {
             explanations.join("; ")
         },

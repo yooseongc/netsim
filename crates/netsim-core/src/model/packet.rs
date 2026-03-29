@@ -112,6 +112,8 @@ pub struct PacketState {
     pub df_flag: bool,
     pub dnat_applied: bool,
     pub snat_applied: bool,
+    /// TPROXY가 적용되었는지 (패킷이 stolen이 아닌 로컬 전달 경로를 따름)
+    pub tproxy_applied: bool,
     pub original_dst_ip: Option<IpAddr>,
     pub original_dst_port: Option<u16>,
     pub original_src_ip: Option<IpAddr>,
@@ -178,6 +180,7 @@ impl PacketState {
             df_flag: def.df_flag,
             dnat_applied: false,
             snat_applied: false,
+            tproxy_applied: false,
             original_dst_ip: None,
             original_dst_port: None,
             original_src_ip: None,

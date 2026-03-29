@@ -45,6 +45,16 @@
 - [x] 총 74개 테스트 통과 (matcher 26 + 통합 42 + 세션 6)
 - [x] docs/NETWORK_STACK.md 작성 (전체 파이프라인 다이어그램, 단계별 상세, sysctl, 인터페이스, 세션)
 - [x] 5단계: 파서 구현 (5개 파서 + 통합 API + 46개 테스트)
+- [x] 엔진 구조 보정 (conntrack/RAW 순서, TPROXY, bridge L2 포워딩, OUTPUT 경로, ingress MTU)
+  - PREROUTING을 raw(priority<=-200) → conntrack → mangle/nat으로 분리
+  - TPROXY가 stolen 대신 로컬 전달 경로를 따르도록 수정 (tproxy_applied 플래그)
+  - Bridge member + bridge_nf_call_iptables=false → L2 브릿지 포워딩 경로 추가
+  - Physical NIC ingress 프레임 크기 검사 추가 (가상 인터페이스 제외)
+  - run_output() 함수 추가 (로컬 발신 패킷: OUTPUT→routing→POSTROUTING→MTU→SENT)
+  - PipelineStage: PreRoutingRaw, BridgeForward, Output 추가
+  - FinalVerdict::Sent 추가
+  - evaluate_chains_subset() 헬퍼 추가
+  - 기존 120개 테스트 전체 통과 유지
 
 ---
 

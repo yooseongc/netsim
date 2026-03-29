@@ -20,7 +20,7 @@ use std::net::IpAddr;
 
 use uuid::Uuid;
 
-use crate::model::interface::{find_interface, Interface};
+use crate::model::interface::{find_interface, Interface, InterfaceKind};
 use crate::model::packet::{EtherType, IpProtocol, PacketState};
 use crate::model::scenario::Scenario;
 use crate::model::sysctl::{RpFilterMode, SysctlConfig};
@@ -104,6 +104,79 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                             state.ingress_if, master
                         ),
                     });
+
+                    // Bridge L2 forwarding path when bridge_nf_call_iptables=false
+                    if !sysctl.bridge_nf_call_iptables {
+                        seq += 1;
+                        trace.push(TraceStep {
+                            seq,
+                            stage: PipelineStage::BridgeForward,
+                            description: "bridge L2 forwarding".to_string(),
+                            state_before: state.clone(),
+                            state_after: state.clone(),
+                            state_changes: vec![],
+                            matched_rules: vec![],
+                            decision: StageDecision::Continue,
+                            explain: format!(
+                                "bridge_nf_call_iptables=0: packet is forwarded at L2 by bridge '{}' \
+                                 without passing through the IP netfilter stack. \
+                                 Bridge FDB lookup determines the output port.",
+                                master
+                            ),
+                        });
+                        return finalize(
+                            scenario,
+                            trace,
+                            all_matched_rules,
+                            FinalVerdict::Forwarded,
+                            &state,
+                        );
+                    }
+                    // bridge_nf_call_iptables=true: continue with normal IP stack path
+                }
+            }
+        }
+    }
+
+    // --- Physical NIC ingress frame size check ---
+    // Physical NICs enforce maximum frame size at the hardware/driver level.
+    // Note: IP MTU (interface.mtu) governs what the host SENDS, not what it receives.
+    // The NIC can receive frames larger than the configured IP MTU.
+    // The actual receive limit is the NIC's max frame size (usually 1518 for standard
+    // Ethernet, 9216 for jumbo frames). We compare against mtu + L2 overhead (18 bytes
+    // for Ethernet header + FCS) as the minimum receivable frame size.
+    // Virtual interfaces (veth, bridge, tun, tap) skip this check entirely.
+    if let Some(ingress_iface) = find_interface(&scenario.interfaces, &state.ingress_if) {
+        if matches!(ingress_iface.kind, InterfaceKind::Physical) {
+            if let Some(pkt_len) = state.packet_length {
+                // L2 max frame = MTU + 14 (Ethernet header) + 4 (FCS) = MTU + 18
+                // But NIC hardware typically accepts up to 9216 (jumbo) even if MTU is 1500.
+                // Use the larger of (mtu + 18) and 9216 as the receive limit.
+                let l2_max_frame = ingress_iface.mtu.saturating_add(18).max(9216);
+                if pkt_len > l2_max_frame {
+                    seq += 1;
+                    trace.push(TraceStep {
+                        seq,
+                        stage: PipelineStage::InterfaceCheck,
+                        description: "physical NIC ingress frame size check".to_string(),
+                        state_before: state.clone(),
+                        state_after: state.clone(),
+                        state_changes: vec![],
+                        matched_rules: vec![],
+                        decision: StageDecision::Drop {
+                            reason: format!(
+                                "Frame too large for physical NIC (MTU={})",
+                                ingress_iface.mtu
+                            ),
+                        },
+                        explain: format!(
+                            "Packet length {} exceeds physical NIC '{}' maximum receive frame size {}. \
+                             Physical NICs drop oversized frames at the driver level. \
+                             Virtual interfaces (veth, bridge, tun, tap) do not enforce this.",
+                            pkt_len, state.ingress_if, l2_max_frame
+                        ),
+                    });
+                    return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
                 }
             }
         }
@@ -235,31 +308,85 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     let result = pipeline::tc_ingress::execute(&state);
     trace.push(make_trace_step(seq, PipelineStage::TcIngress, &state_before, &state, &result));
 
-    // --- Stage 3: conntrack lookup ---
-    seq += 1;
-    trace.push(TraceStep {
-        seq,
-        stage: PipelineStage::ConntrackIn,
-        description: "conntrack lookup".to_string(),
-        state_before: state.clone(),
-        state_after: state.clone(),
-        state_changes: vec![],
-        matched_rules: vec![],
-        decision: StageDecision::Continue,
-        explain: format!(
-            "Conntrack lookup: packet classified as ct_state={} (user-declared)",
-            state.ct_state
-        ),
-    });
+    // --- Stage 3-4: PREROUTING (split into raw → conntrack → mangle/nat) ---
+    // In Linux, the PREROUTING hook processes chains in priority order:
+    //   raw (-300) → conntrack → mangle (-150) → nat (-100)
+    // RAW table runs BEFORE conntrack, others run AFTER.
+    {
+        let all_prerouting_chains = pipeline::collect_chains_for_hook(
+            &scenario.netfilter,
+            &crate::model::netfilter::NfHook::Prerouting,
+        );
 
-    // --- Stage 4: PREROUTING ---
-    seq += 1;
-    let state_before = state.clone();
-    let result = pipeline::prerouting::execute(&scenario.netfilter, &mut state, &scenario.interfaces);
-    trace.push(make_trace_step(seq, PipelineStage::PreRouting, &state_before, &state, &result));
-    all_matched_rules.extend(result.matched_rules.clone());
-    if let Some(verdict) = terminal_verdict(&result.decision) {
-        return finalize(scenario, trace, all_matched_rules, verdict, &state);
+        // Split chains: raw (priority <= -200) vs post-conntrack (priority > -200)
+        let (raw_chains, post_ct_chains): (Vec<_>, Vec<_>) =
+            all_prerouting_chains.into_iter().partition(|c| c.priority <= -200);
+
+        // (a) Evaluate RAW chains (before conntrack)
+        if !raw_chains.is_empty() {
+            seq += 1;
+            let state_before = state.clone();
+            let result = pipeline::evaluate_chains_subset(
+                &raw_chains,
+                "PREROUTING_RAW",
+                &mut state,
+                &scenario.interfaces,
+            );
+            trace.push(make_trace_step(
+                seq,
+                PipelineStage::PreRoutingRaw,
+                &state_before,
+                &state,
+                &result,
+            ));
+            all_matched_rules.extend(result.matched_rules.clone());
+            if let Some(verdict) = terminal_verdict(&result.decision) {
+                return finalize(scenario, trace, all_matched_rules, verdict, &state);
+            }
+        }
+
+        // (b) Conntrack lookup (after raw, before mangle/nat)
+        // TODO: If raw chain sets NOTRACK, skip conntrack
+        seq += 1;
+        trace.push(TraceStep {
+            seq,
+            stage: PipelineStage::ConntrackIn,
+            description: "conntrack lookup".to_string(),
+            state_before: state.clone(),
+            state_after: state.clone(),
+            state_changes: vec![],
+            matched_rules: vec![],
+            decision: StageDecision::Continue,
+            explain: format!(
+                "Conntrack lookup: packet classified as ct_state={} (user-declared)",
+                state.ct_state
+            ),
+        });
+
+        // (c) Evaluate post-conntrack chains (mangle, nat, etc.)
+        seq += 1;
+        let state_before = state.clone();
+        let result = pipeline::evaluate_chains_subset(
+            &post_ct_chains,
+            "PREROUTING",
+            &mut state,
+            &scenario.interfaces,
+        );
+        trace.push(make_trace_step(
+            seq,
+            PipelineStage::PreRouting,
+            &state_before,
+            &state,
+            &result,
+        ));
+        all_matched_rules.extend(result.matched_rules.clone());
+        // TPROXY: do NOT return Stolen — packet continues through routing → INPUT
+        if state.tproxy_applied {
+            // TPROXY sets mark and dst, packet continues through normal routing path
+            // (mark causes policy routing to local table → local delivery → INPUT)
+        } else if let Some(verdict) = terminal_verdict(&result.decision) {
+            return finalize(scenario, trace, all_matched_rules, verdict, &state);
+        }
     }
 
     // --- sysctl: route_localnet check ---
@@ -694,4 +821,208 @@ fn make_trace_step(
         decision: result.decision.clone(),
         explain: result.explain.clone(),
     }
+}
+
+/// 로컬 발신 패킷 시뮬레이션 (OUTPUT 경로)
+///
+/// 파이프라인:
+///   OUTPUT chains (raw → conntrack → mangle → filter → nat)
+///   → Routing Decision (post-OUTPUT)
+///   → POSTROUTING chains
+///   → egress MTU check
+///   → conntrack confirm
+///   → SENT
+pub fn run_output(scenario: &Scenario) -> SimulationResult {
+    let mut state = PacketState::from_packet_def(&scenario.packet);
+    let mut trace = Vec::new();
+    let mut all_matched_rules: Vec<MatchedRuleRef> = Vec::new();
+    let mut seq: u32 = 0;
+
+    // --- Stage 1: OUTPUT chains ---
+    // Like PREROUTING, OUTPUT is split: raw → conntrack → mangle/filter/nat
+    {
+        let all_output_chains = pipeline::collect_chains_for_hook(
+            &scenario.netfilter,
+            &crate::model::netfilter::NfHook::Output,
+        );
+
+        // Split: raw (priority <= -200) vs post-conntrack
+        let (raw_chains, post_ct_chains): (Vec<_>, Vec<_>) =
+            all_output_chains.into_iter().partition(|c| c.priority <= -200);
+
+        // (a) RAW chains
+        if !raw_chains.is_empty() {
+            seq += 1;
+            let state_before = state.clone();
+            let result = pipeline::evaluate_chains_subset(
+                &raw_chains,
+                "OUTPUT_RAW",
+                &mut state,
+                &scenario.interfaces,
+            );
+            trace.push(make_trace_step(
+                seq,
+                PipelineStage::Output,
+                &state_before,
+                &state,
+                &result,
+            ));
+            all_matched_rules.extend(result.matched_rules.clone());
+            if let Some(verdict) = terminal_verdict(&result.decision) {
+                return finalize(scenario, trace, all_matched_rules, verdict, &state);
+            }
+        }
+
+        // (b) Conntrack
+        seq += 1;
+        trace.push(TraceStep {
+            seq,
+            stage: PipelineStage::ConntrackIn,
+            description: "conntrack lookup (output)".to_string(),
+            state_before: state.clone(),
+            state_after: state.clone(),
+            state_changes: vec![],
+            matched_rules: vec![],
+            decision: StageDecision::Continue,
+            explain: format!(
+                "Conntrack lookup for locally-originated packet: ct_state={} (user-declared)",
+                state.ct_state
+            ),
+        });
+
+        // (c) Post-conntrack OUTPUT chains (mangle, filter, nat)
+        seq += 1;
+        let state_before = state.clone();
+        let result = pipeline::evaluate_chains_subset(
+            &post_ct_chains,
+            "OUTPUT",
+            &mut state,
+            &scenario.interfaces,
+        );
+        trace.push(make_trace_step(
+            seq,
+            PipelineStage::Output,
+            &state_before,
+            &state,
+            &result,
+        ));
+        all_matched_rules.extend(result.matched_rules.clone());
+        if let Some(verdict) = terminal_verdict(&result.decision) {
+            return finalize(scenario, trace, all_matched_rules, verdict, &state);
+        }
+    }
+
+    // --- Stage 2: Routing Decision (post-OUTPUT) ---
+    seq += 1;
+    let state_before = state.clone();
+    let result = pipeline::routing::execute(
+        &scenario.ip_rules,
+        &scenario.routing_tables,
+        &scenario.interfaces,
+        &mut state,
+    );
+    trace.push(make_trace_step(
+        seq,
+        PipelineStage::RoutingDecision,
+        &state_before,
+        &state,
+        &result,
+    ));
+    all_matched_rules.extend(result.matched_rules.clone());
+
+    match &result.decision {
+        StageDecision::Drop { .. } => {
+            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+        }
+        StageDecision::Reject { .. } => {
+            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Rejected, &state);
+        }
+        _ => {}
+    }
+
+    // --- Stage 3: POSTROUTING chains ---
+    seq += 1;
+    let state_before = state.clone();
+    let result =
+        pipeline::postrouting::execute(&scenario.netfilter, &mut state, &scenario.interfaces);
+    trace.push(make_trace_step(
+        seq,
+        PipelineStage::PostRouting,
+        &state_before,
+        &state,
+        &result,
+    ));
+    all_matched_rules.extend(result.matched_rules.clone());
+    if let Some(verdict) = terminal_verdict(&result.decision) {
+        return finalize(scenario, trace, all_matched_rules, verdict, &state);
+    }
+
+    // --- Stage 4: Egress MTU check ---
+    if let Some(ref egress_name) = state.egress_if {
+        if let Some(egress_iface) = find_interface(&scenario.interfaces, egress_name) {
+            let mtu = egress_iface.mtu;
+            if let Some(pkt_len) = state.packet_length {
+                if pkt_len > mtu {
+                    seq += 1;
+                    if state.df_flag {
+                        trace.push(TraceStep {
+                            seq,
+                            stage: PipelineStage::MtuCheck,
+                            description: "MTU exceeded with DF flag".to_string(),
+                            state_before: state.clone(),
+                            state_after: state.clone(),
+                            state_changes: vec![],
+                            matched_rules: vec![],
+                            decision: StageDecision::Drop {
+                                reason: "Packet exceeds MTU and DF flag is set".to_string(),
+                            },
+                            explain: format!(
+                                "Packet length {} exceeds egress interface '{}' MTU {} and DF flag is set.",
+                                pkt_len, egress_name, mtu
+                            ),
+                        });
+                        return finalize(
+                            scenario,
+                            trace,
+                            all_matched_rules,
+                            FinalVerdict::Drop,
+                            &state,
+                        );
+                    } else {
+                        trace.push(TraceStep {
+                            seq,
+                            stage: PipelineStage::MtuCheck,
+                            description: "MTU exceeded, fragmentation needed".to_string(),
+                            state_before: state.clone(),
+                            state_after: state.clone(),
+                            state_changes: vec![],
+                            matched_rules: vec![],
+                            decision: StageDecision::Continue,
+                            explain: format!(
+                                "Packet length {} exceeds egress interface '{}' MTU {}. \
+                                 Packet would be fragmented before transmission.",
+                                pkt_len, egress_name, mtu
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Stage 5: Conntrack confirm ---
+    seq += 1;
+    trace.push(TraceStep {
+        seq,
+        stage: PipelineStage::ConntrackConfirm,
+        description: "conntrack confirm".to_string(),
+        state_before: state.clone(),
+        state_after: state.clone(),
+        state_changes: vec![],
+        matched_rules: vec![],
+        decision: StageDecision::Continue,
+        explain: "Conntrack entry confirmed for locally-originated packet".to_string(),
+    });
+
+    finalize(scenario, trace, all_matched_rules, FinalVerdict::Sent, &state)
 }

@@ -31,3 +31,21 @@
 **문제**: 시뮬레이션을 비동기로 실행할 필요가 있는가.
 **결정**: MVP에서는 동기 실행. API 응답에 simulation_id + status 구조는 유지하여 향후 비동기 전환 용이.
 **이유**: 단일 패킷 시뮬레이션은 충분히 빠르므로 (< 10ms) 비동기가 불필요.
+
+### D-005. PREROUTING RAW/conntrack 분리
+
+**문제**: PREROUTING을 단일 evaluate_netfilter_hook으로 처리하면 RAW 테이블이 conntrack 이후에 평가됨.
+**결정**: collect_chains_for_hook으로 체인을 수집한 후 priority -200 기준으로 raw/post-conntrack 그룹으로 분리. evaluate_chains_subset 헬퍼로 각 그룹을 별도 평가.
+**이유**: Linux 커널에서 raw table(-300)은 conntrack 이전에 실행되어 NOTRACK 등을 설정할 수 있어야 함.
+
+### D-006. Physical NIC ingress MTU vs IP MTU
+
+**문제**: ingress MTU 검사에서 interface.mtu를 직접 사용하면 정상적인 포워딩 시나리오가 깨짐 (MTU=1500인 NIC에서 2000바이트 패킷 수신 가능).
+**결정**: IP MTU가 아닌 물리적 수신 프레임 크기 상한(max(mtu+18, 9216))으로 비교. 가상 인터페이스는 검사 생략.
+**이유**: Linux에서 IP MTU는 송신 측 제약. NIC는 설정된 MTU보다 큰 프레임을 수신할 수 있음 (예: jumbo frame 지원).
+
+### D-007. TPROXY는 stolen이 아닌 로컬 전달
+
+**문제**: TPROXY를 StageDecision::Stolen으로 처리하면 패킷이 INPUT 체인을 거치지 않음.
+**결정**: TPROXY 적용 시 tproxy_applied 플래그를 설정하고, stolen 대신 정상 라우팅→INPUT 경로를 따르도록 함.
+**이유**: Linux에서 TPROXY는 mark + dst 변경 후 정책 라우팅으로 로컬 테이블에 전달하여 INPUT 체인을 통과함.

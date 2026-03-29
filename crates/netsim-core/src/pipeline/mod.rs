@@ -124,6 +124,7 @@ fn hook_to_iptables_chain_name(hook: &NfHook) -> String {
 
 /// 체인의 규칙을 평가하여 결과 반환.
 /// NAT 액션이 있으면 PacketState를 직접 수정한다.
+/// `config`는 Jump/Goto 대상의 커스텀 체인 조회에 사용한다.
 /// returns: (decision, matched_rules, should_stop)
 ///   should_stop=true이면 이후 체인도 중단
 pub fn evaluate_chain(
@@ -131,6 +132,20 @@ pub fn evaluate_chain(
     state: &mut PacketState,
     interfaces: &[crate::model::interface::Interface],
 ) -> ChainEvalResult {
+    evaluate_chain_inner(chain, state, interfaces, &[], 0)
+}
+
+/// 체인 평가 내부 함수 (커스텀 체인 재귀 지원)
+/// `all_chains_in_table`은 Jump/Goto 대상을 찾기 위한 같은 테이블의 모든 체인.
+/// `depth`는 무한 재귀 방지용 (최대 16단계).
+fn evaluate_chain_inner(
+    chain: &OrderedChain,
+    state: &mut PacketState,
+    interfaces: &[crate::model::interface::Interface],
+    all_chains_in_table: &[OrderedChain],
+    depth: u32,
+) -> ChainEvalResult {
+    const MAX_CHAIN_DEPTH: u32 = 16;
     let mut matched_rules = Vec::new();
 
     for (idx, rule) in chain.rules.iter().enumerate() {
@@ -188,7 +203,6 @@ pub fn evaluate_chain(
                     // continue evaluating next rule
                 }
                 NfVerdict::Queue => {
-                    // treat as stolen for simulation purposes
                     return ChainEvalResult {
                         decision: Some(StageDecision::Stolen),
                         matched_rules,
@@ -198,11 +212,10 @@ pub fn evaluate_chain(
             },
             NfAction::Nat { action: nat_action } => {
                 apply_nat(nat_action, state, interfaces);
-                // NAT rules implicitly accept in their chain
                 return ChainEvalResult {
                     decision: Some(StageDecision::Accept),
                     matched_rules,
-                    stop: false, // NAT accept doesn't stop other chains
+                    stop: false,
                 };
             }
             NfAction::SetMark { value, mask } => {
@@ -211,17 +224,63 @@ pub fn evaluate_chain(
                     None => *value,
                 };
                 state.mark = new_mark;
-                // continue evaluating
             }
             NfAction::Log { .. } | NfAction::Counter => {
-                // non-terminating actions, continue
+                // non-terminating actions
             }
-            NfAction::Jump { .. } | NfAction::Goto { .. } => {
-                // jump/goto to user chains — for MVP, treat as continue
-                // (full implementation would recurse into the target chain)
+            NfAction::Jump { target } => {
+                // Jump: 타겟 체인 평가 후 Return 시 현재 체인의 다음 규칙으로 복귀
+                if depth >= MAX_CHAIN_DEPTH {
+                    continue; // 무한 재귀 방지
+                }
+                if let Some(target_chain) = find_user_chain(all_chains_in_table, &chain.table_name, target) {
+                    let sub_result = evaluate_chain_inner(
+                        &target_chain, state, interfaces, all_chains_in_table, depth + 1,
+                    );
+                    matched_rules.extend(sub_result.matched_rules);
+                    // 타겟 체인에서 terminal decision이 나오면 전파
+                    if let Some(decision) = sub_result.decision {
+                        match &decision {
+                            StageDecision::Continue => {
+                                // Return from target chain → continue in current chain
+                            }
+                            _ => {
+                                // Accept/Drop/Reject/Stolen → 전파
+                                return ChainEvalResult {
+                                    decision: Some(decision),
+                                    matched_rules,
+                                    stop: sub_result.stop,
+                                };
+                            }
+                        }
+                    }
+                    // target chain에서 decision=None (no match, no policy) → continue in current chain
+                }
+            }
+            NfAction::Goto { target } => {
+                // Goto: 타겟 체인으로 이동, Return 시 현재 체인이 아닌 base chain 정책으로
+                // 구현: 타겟 체인 평가 후 현재 체인 종료 (다음 규칙으로 복귀하지 않음)
+                if depth >= MAX_CHAIN_DEPTH {
+                    continue;
+                }
+                if let Some(target_chain) = find_user_chain(all_chains_in_table, &chain.table_name, target) {
+                    let sub_result = evaluate_chain_inner(
+                        &target_chain, state, interfaces, all_chains_in_table, depth + 1,
+                    );
+                    matched_rules.extend(sub_result.matched_rules);
+                    if let Some(decision) = sub_result.decision {
+                        return ChainEvalResult {
+                            decision: Some(decision),
+                            matched_rules,
+                            stop: sub_result.stop,
+                        };
+                    }
+                    // Goto에서 no decision → base chain policy로 (현재 체인 종료)
+                    break;
+                }
             }
             NfAction::Return => {
-                // return to chain policy
+                // Return: 호출한 체인(Jump)으로 복귀하거나, base chain이면 정책 적용
                 break;
             }
         }
@@ -399,6 +458,57 @@ fn format_rule_summary(rule: &NfRule) -> String {
     format!("{} -> {}{}", match_str, action_str, comment)
 }
 
+/// 같은 테이블 내에서 이름으로 커스텀(user) 체인을 찾는다.
+/// hook이 없는(base chain이 아닌) 체인, 또는 이름이 일치하는 체인을 반환.
+fn find_user_chain(
+    all_chains: &[OrderedChain],
+    table_name: &str,
+    chain_name: &str,
+) -> Option<OrderedChain> {
+    all_chains
+        .iter()
+        .find(|c| c.table_name == table_name && c.chain_name == chain_name)
+        .cloned()
+}
+
+/// 특정 테이블의 모든 체인(base + user)을 수집한다.
+/// Jump/Goto 대상 체인 조회에 사용.
+pub fn collect_all_chains_in_tables(config: &NetfilterConfig) -> Vec<OrderedChain> {
+    let mut chains = Vec::new();
+
+    if let Some(nft) = &config.nftables {
+        for table in &nft.tables {
+            for chain in &table.chains {
+                chains.push(OrderedChain {
+                    source: RuleSource::Nftables,
+                    table_name: table.name.clone(),
+                    chain_name: chain.name.clone(),
+                    priority: chain.priority.unwrap_or(0),
+                    policy: chain.policy.clone(),
+                    rules: chain.rules.clone(),
+                });
+            }
+        }
+    }
+
+    if let Some(ipt) = &config.iptables {
+        for table in &ipt.tables {
+            for chain in &table.chains {
+                chains.push(OrderedChain {
+                    source: RuleSource::Iptables,
+                    table_name: table.name.clone(),
+                    chain_name: chain.name.clone(),
+                    priority: 0,
+                    policy: chain.policy.clone(),
+                    rules: chain.rules.clone(),
+                });
+            }
+        }
+    }
+
+    chains
+}
+
 fn source_label(source: &RuleSource) -> &'static str {
     match source {
         RuleSource::Nftables => "nftables",
@@ -433,11 +543,14 @@ pub fn evaluate_netfilter_hook(
         ));
     }
 
+    // 커스텀 체인 (Jump/Goto 대상) 조회를 위한 전체 체인 목록
+    let all_table_chains = collect_all_chains_in_tables(config);
+
     let mut all_matched = Vec::new();
     let mut explanations = Vec::new();
 
     for chain in &chains {
-        let result = evaluate_chain(chain, state, interfaces);
+        let result = evaluate_chain_inner(chain, state, interfaces, &all_table_chains, 0);
         all_matched.extend(result.matched_rules);
 
         if let Some(decision) = result.decision {
@@ -513,6 +626,7 @@ pub fn evaluate_chains_subset(
     label: &str,
     state: &mut PacketState,
     interfaces: &[crate::model::interface::Interface],
+    all_table_chains: &[OrderedChain],
 ) -> StageResult {
     // L2-only 패킷은 netfilter를 건너뛴다
     if state.ethertype.is_l2_only() {
@@ -532,7 +646,7 @@ pub fn evaluate_chains_subset(
     let mut explanations = Vec::new();
 
     for chain in chains {
-        let result = evaluate_chain(chain, state, interfaces);
+        let result = evaluate_chain_inner(chain, state, interfaces, all_table_chains, 0);
         all_matched.extend(result.matched_rules);
 
         if let Some(decision) = result.decision {

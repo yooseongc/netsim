@@ -289,6 +289,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             &scenario.netfilter,
             &crate::model::netfilter::NfHook::Prerouting,
         );
+        let all_table_chains = pipeline::collect_all_chains_in_tables(&scenario.netfilter);
 
         // Split chains: raw (priority <= -200) vs post-conntrack (priority > -200)
         // Linux netfilter priority 체계:
@@ -308,6 +309,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                 "PREROUTING_RAW",
                 &mut state,
                 &scenario.interfaces,
+                &all_table_chains,
             );
             trace.push(make_trace_step(
                 seq,
@@ -348,6 +350,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             "PREROUTING",
             &mut state,
             &scenario.interfaces,
+            &all_table_chains,
         );
         trace.push(make_trace_step(
             seq,
@@ -845,6 +848,7 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
             &scenario.netfilter,
             &crate::model::netfilter::NfHook::Output,
         );
+        let all_table_chains = pipeline::collect_all_chains_in_tables(&scenario.netfilter);
 
         // Split: raw (priority <= -200) vs post-conntrack
         let (raw_chains, post_ct_chains): (Vec<_>, Vec<_>) =
@@ -859,6 +863,7 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
                 "OUTPUT_RAW",
                 &mut state,
                 &scenario.interfaces,
+                &all_table_chains,
             );
             trace.push(make_trace_step(
                 seq,
@@ -898,6 +903,7 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
             "OUTPUT",
             &mut state,
             &scenario.interfaces,
+            &all_table_chains,
         );
         trace.push(make_trace_step(
             seq,

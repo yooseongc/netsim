@@ -27,6 +27,11 @@ const stageLabels: Record<string, string> = {
   conntrack_confirm: 'CONNTRACK_CONFIRM',
   bridge_forward: 'BRIDGE_FORWARD',
   output: 'OUTPUT',
+  br_nf_prerouting: 'BR_NF_PREROUTING',
+  br_nf_forward: 'BR_NF_FORWARD',
+  br_nf_postrouting: 'BR_NF_POSTROUTING',
+  loopback_delivery: 'LOOPBACK_DELIVERY',
+  reroute: 'REROUTE',
 };
 
 const stageBorderColors: Record<string, string> = {
@@ -47,6 +52,11 @@ const stageBorderColors: Record<string, string> = {
   arp_process: 'border-l-gray-400',
   l2_bypass: 'border-l-gray-400',
   bridge_forward: 'border-l-gray-400',
+  br_nf_prerouting: 'border-l-amber-400',
+  br_nf_forward: 'border-l-teal-400',
+  br_nf_postrouting: 'border-l-orange-400',
+  loopback_delivery: 'border-l-purple-500',
+  reroute: 'border-l-yellow-500',
 };
 
 function nodeColor(step: TraceStep): string {

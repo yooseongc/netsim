@@ -61,7 +61,12 @@ export type PipelineStage =
   | 'conntrack_confirm'
   | 'pre_routing_raw'
   | 'bridge_forward'
-  | 'output';
+  | 'output'
+  | 'br_nf_prerouting'
+  | 'br_nf_forward'
+  | 'br_nf_postrouting'
+  | 'loopback_delivery'
+  | 'reroute';
 
 export interface PacketState {
   ethertype: string;

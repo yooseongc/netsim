@@ -361,6 +361,38 @@ export interface Scenario {
   xdp?: XdpConfig;
   sysctl?: SysctlConfig;
   packet: PacketDef;
+  topology?: Topology | null;
+}
+
+// --- Endpoint Role Model ---
+
+export type EndpointRole =
+  | 'local_client'
+  | 'remote_client'
+  | 'local_server'
+  | 'remote_server'
+  | 'local_proxy'
+  | 'local_tproxy';
+
+export interface Endpoint {
+  role: EndpointRole;
+  name: string;
+  ip: string;
+  port?: number | null;
+  interface?: string | null;
+}
+
+export interface TrafficFlow {
+  name: string;
+  source: string;
+  destination: string;
+  protocol?: string | null;
+  description?: string | null;
+}
+
+export interface Topology {
+  endpoints?: Endpoint[];
+  flows?: TrafficFlow[];
 }
 
 // --- Validation (frontend-only) ---

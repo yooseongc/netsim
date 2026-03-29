@@ -109,11 +109,33 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         }
     }
 
-    // --- ARP processing ---
+    // --- Stage 1: XDP ---
+    // XDP runs first at driver level, before any L2/L3 processing
+    seq += 1;
+    let state_before = state.clone();
+    let result = pipeline::xdp::execute(&scenario.xdp, &mut state);
+    trace.push(make_trace_step(seq, PipelineStage::Xdp, &state_before, &state, &result));
+    all_matched_rules.extend(result.matched_rules.clone());
+    match &result.decision {
+        StageDecision::Drop { .. } => {
+            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+        }
+        StageDecision::Redirect { target } => {
+            let verdict = if *target == state.ingress_if {
+                FinalVerdict::Tx
+            } else {
+                FinalVerdict::Redirect
+            };
+            return finalize(scenario, trace, all_matched_rules, verdict, &state);
+        }
+        _ => {}
+    }
+
+    // --- ARP processing (after XDP, before L2 bypass) ---
+    // Linux kernel: ARP is processed in the network stack after XDP
     if matches!(state.ethertype, EtherType::Arp) {
         let arp_conf = sysctl.get_interface_conf(&state.ingress_if);
         if arp_conf.arp_ignore >= 1 {
-            // arp_ignore >= 1: target IP must be configured on the ingress interface
             let target_ip = scenario.packet.arp.as_ref().and_then(|a| a.target_ip);
             let mut should_drop = false;
             let mut explain = String::new();
@@ -130,20 +152,17 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                         arp_conf.arp_ignore, tip, state.ingress_if
                     );
                 } else if arp_conf.arp_ignore >= 2 {
-                    // arp_ignore >= 2: additionally check sender IP is in same subnet
                     let sender_ip = scenario.packet.arp.as_ref().and_then(|a| a.sender_ip);
                     if let Some(sip) = sender_ip {
                         let same_subnet = find_interface(&scenario.interfaces, &state.ingress_if)
                             .map(|iface| {
-                                iface.addresses.iter().any(|a| {
-                                    is_same_subnet(&a.ip, &sip, a.prefix_len)
-                                })
+                                iface.addresses.iter().any(|a| is_same_subnet(&a.ip, &sip, a.prefix_len))
                             })
                             .unwrap_or(false);
                         if !same_subnet {
                             should_drop = true;
                             explain = format!(
-                                "arp_ignore={}: ARP sender IP {} is not in the same subnet as any address on ingress interface '{}' — ARP reply suppressed",
+                                "arp_ignore={}: ARP sender IP {} is not in the same subnet as any address on '{}' — ARP reply suppressed",
                                 arp_conf.arp_ignore, sip, state.ingress_if
                             );
                         }
@@ -169,27 +188,6 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                 return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
             }
         }
-    }
-
-    // --- Stage 1: XDP ---
-    seq += 1;
-    let state_before = state.clone();
-    let result = pipeline::xdp::execute(&scenario.xdp, &mut state);
-    trace.push(make_trace_step(seq, PipelineStage::Xdp, &state_before, &state, &result));
-    all_matched_rules.extend(result.matched_rules.clone());
-    match &result.decision {
-        StageDecision::Drop { .. } => {
-            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
-        }
-        StageDecision::Redirect { target } => {
-            let verdict = if *target == state.ingress_if {
-                FinalVerdict::Tx
-            } else {
-                FinalVerdict::Redirect
-            };
-            return finalize(scenario, trace, all_matched_rules, verdict, &state);
-        }
-        _ => {}
     }
 
     // L2-only 패킷은 XDP 이후 netfilter/routing 건너뛰기
@@ -339,10 +337,30 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::LocalDelivery, &state)
         }
         StageDecision::ForwardTo { .. } => {
-            // --- (d) Egress interface state check ---
+            // --- (d) Egress interface existence + state check ---
             if let Some(ref egress_name) = state.egress_if {
-                if let Some(egress_iface) = find_interface(&scenario.interfaces, egress_name) {
-                    if !egress_iface.is_up() {
+                match find_interface(&scenario.interfaces, egress_name) {
+                    None => {
+                        seq += 1;
+                        trace.push(TraceStep {
+                            seq,
+                            stage: PipelineStage::InterfaceCheck,
+                            description: "egress interface check".to_string(),
+                            state_before: state.clone(),
+                            state_after: state.clone(),
+                            state_changes: vec![],
+                            matched_rules: vec![],
+                            decision: StageDecision::Drop {
+                                reason: "Unknown egress interface".to_string(),
+                            },
+                            explain: format!(
+                                "Egress interface '{}' does not exist in scenario interfaces",
+                                egress_name
+                            ),
+                        });
+                        return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+                    }
+                    Some(egress_iface) if !egress_iface.is_up() => {
                         seq += 1;
                         trace.push(TraceStep {
                             seq,
@@ -362,6 +380,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                         });
                         return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
                     }
+                    _ => {} // exists and up
                 }
             }
 

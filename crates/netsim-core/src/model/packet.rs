@@ -83,6 +83,9 @@ pub struct ArpFields {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PacketState {
     pub ethertype: EtherType,
+    pub vlan_id: Option<u16>,
+    pub src_mac: Option<String>,
+    pub dst_mac: Option<String>,
     pub src_ip: Option<IpAddr>,
     pub dst_ip: Option<IpAddr>,
     pub src_port: Option<u16>,
@@ -152,6 +155,9 @@ impl PacketState {
     pub fn from_packet_def(def: &PacketDef) -> Self {
         Self {
             ethertype: def.ethertype.clone(),
+            vlan_id: def.vlan_id,
+            src_mac: def.src_mac.clone(),
+            dst_mac: def.dst_mac.clone(),
             src_ip: def.src_ip,
             dst_ip: def.dst_ip,
             src_port: def.src_port,

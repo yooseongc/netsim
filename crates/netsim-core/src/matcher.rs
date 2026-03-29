@@ -430,6 +430,9 @@ mod tests {
     fn make_tcp_state() -> PacketState {
         PacketState {
             ethertype: EtherType::Ipv4,
+            vlan_id: None,
+            src_mac: None,
+            dst_mac: None,
             src_ip: Some("10.0.0.1".parse().unwrap()),
             dst_ip: Some("192.168.1.1".parse().unwrap()),
             src_port: Some(54321),
@@ -463,6 +466,9 @@ mod tests {
     fn make_icmp_state() -> PacketState {
         PacketState {
             ethertype: EtherType::Ipv4,
+            vlan_id: None,
+            src_mac: None,
+            dst_mac: None,
             src_ip: Some("10.0.0.1".parse().unwrap()),
             dst_ip: Some("10.0.0.2".parse().unwrap()),
             src_port: None,
@@ -493,6 +499,9 @@ mod tests {
     fn make_udp_state() -> PacketState {
         PacketState {
             ethertype: EtherType::Ipv4,
+            vlan_id: None,
+            src_mac: None,
+            dst_mac: None,
             src_ip: Some("10.0.0.1".parse().unwrap()),
             dst_ip: Some("10.0.0.2".parse().unwrap()),
             src_port: Some(12345),

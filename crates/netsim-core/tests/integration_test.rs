@@ -15,7 +15,7 @@ use netsim_core::model::routing::*;
 use netsim_core::model::scenario::Scenario;
 use netsim_core::model::sysctl::SysctlConfig;
 use netsim_core::model::xdp::*;
-use netsim_core::trace::FinalVerdict;
+use netsim_core::trace::{FinalVerdict, PipelineStage};
 
 /// 기본 인터페이스 셋 (eth0: 10.0.0.1/24, eth1: 192.168.1.1/24, lo)
 fn default_interfaces() -> Vec<Interface> {
@@ -1917,6 +1917,696 @@ fn test_sysctl_rp_filter_strict() {
     assert_eq!(result.verdict, FinalVerdict::Drop);
     let has_rp_msg = result.trace.iter().any(|s| s.explain.contains("Reverse path filter"));
     assert!(has_rp_msg);
+}
+
+// ============================================================
+// 시나리오 32: Ingress interface down → Drop
+// ============================================================
+#[test]
+fn test_ingress_interface_down() {
+    let (rules, tables) = default_routing();
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: Some("00:11:22:33:44:55".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "10.0.0.1".parse().unwrap(),
+                prefix_len: 24,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Down,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+    ];
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "ingress-down".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_down_msg = result.trace.iter().any(|s| s.explain.contains("DOWN state"));
+    assert!(has_down_msg, "Should mention interface DOWN state in trace");
+}
+
+// ============================================================
+// 시나리오 33: Egress interface down → Drop
+// ============================================================
+#[test]
+fn test_egress_interface_down() {
+    let (rules, tables) = default_routing();
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: Some("00:11:22:33:44:55".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "10.0.0.1".parse().unwrap(),
+                prefix_len: 24,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+        Interface {
+            name: "eth1".to_string(),
+            index: 3,
+            mac: Some("00:11:22:33:44:66".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "192.168.1.1".parse().unwrap(),
+                prefix_len: 24,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Down,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+    ];
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "egress-down".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("192.168.1.100".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_egress_down = result.trace.iter().any(|s| s.explain.contains("Egress interface") && s.explain.contains("DOWN"));
+    assert!(has_egress_down, "Should mention egress interface DOWN in trace");
+}
+
+// ============================================================
+// 시나리오 34: MTU exceeded with DF flag → Drop
+// ============================================================
+#[test]
+fn test_mtu_exceeded_with_df_flag() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "mtu-df-drop".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("192.168.1.100".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            packet_length: Some(2000),
+            df_flag: true,
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_mtu_msg = result.trace.iter().any(|s| {
+        s.stage == PipelineStage::MtuCheck && s.explain.contains("DF")
+    });
+    assert!(has_mtu_msg, "Should have MTU check with DF flag mention");
+}
+
+// ============================================================
+// 시나리오 35: MTU exceeded without DF flag → Forwarded (fragmentation)
+// ============================================================
+#[test]
+fn test_mtu_exceeded_without_df_flag() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "mtu-frag".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("192.168.1.100".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            packet_length: Some(2000),
+            df_flag: false,
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+    let has_frag_msg = result.trace.iter().any(|s| {
+        s.stage == PipelineStage::MtuCheck && s.explain.contains("fragmented")
+    });
+    assert!(has_frag_msg, "Should have MTU check with fragmentation note");
+}
+
+// ============================================================
+// 시나리오 36: Bridge member detection
+// ============================================================
+#[test]
+fn test_bridge_member_detection() {
+    let (rules, tables) = default_routing();
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: Some("00:11:22:33:44:55".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "10.0.0.1".parse().unwrap(),
+                prefix_len: 24,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: Some("br0".to_string()),
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+    ];
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "bridge-member".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    let has_bridge_step = result.trace.iter().any(|s| {
+        s.stage == PipelineStage::InterfaceCheck && s.explain.contains("bridge") && s.explain.contains("br0")
+    });
+    assert!(has_bridge_step, "Should have InterfaceCheck step mentioning bridge 'br0'");
+}
+
+// ============================================================
+// 시나리오 37: arp_ignore=1, target IP not on interface → Drop
+// ============================================================
+#[test]
+fn test_arp_ignore_level_1() {
+    let (rules, tables) = default_routing();
+    let mut sysctl = SysctlConfig::default();
+    sysctl.interface_conf.insert("eth0".to_string(),
+        netsim_core::model::sysctl::InterfaceSysctl {
+            arp_ignore: 1,
+            ..Default::default()
+        });
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "arp-ignore-1".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Arp,
+            src_ip: None,
+            dst_ip: None,
+            protocol: IpProtocol::Other(0),
+            arp: Some(ArpFields {
+                operation: 1,
+                sender_mac: Some("00:aa:bb:cc:dd:ee".to_string()),
+                sender_ip: Some("10.0.0.100".parse().unwrap()),
+                target_mac: None,
+                target_ip: Some("192.168.1.1".parse().unwrap()), // not on eth0
+            }),
+            conntrack_state: ConntrackState::Untracked,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_arp_msg = result.trace.iter().any(|s| s.explain.contains("arp_ignore"));
+    assert!(has_arp_msg, "Should mention arp_ignore in trace");
+}
+
+// ============================================================
+// 시나리오 38: arp_ignore=2, sender IP not in same subnet → Drop
+// ============================================================
+#[test]
+fn test_arp_ignore_level_2() {
+    let (rules, tables) = default_routing();
+    let mut sysctl = SysctlConfig::default();
+    sysctl.interface_conf.insert("eth0".to_string(),
+        netsim_core::model::sysctl::InterfaceSysctl {
+            arp_ignore: 2,
+            ..Default::default()
+        });
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "arp-ignore-2".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Arp,
+            src_ip: None,
+            dst_ip: None,
+            protocol: IpProtocol::Other(0),
+            arp: Some(ArpFields {
+                operation: 1,
+                sender_mac: Some("00:aa:bb:cc:dd:ee".to_string()),
+                sender_ip: Some("192.168.1.100".parse().unwrap()), // not in eth0's 10.0.0.0/24
+                target_mac: None,
+                target_ip: Some("10.0.0.1".parse().unwrap()), // on eth0
+            }),
+            conntrack_state: ConntrackState::Untracked,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_arp_msg = result.trace.iter().any(|s| s.explain.contains("arp_ignore=2") && s.explain.contains("sender IP"));
+    assert!(has_arp_msg, "Should mention arp_ignore=2 and sender IP in trace");
+}
+
+// ============================================================
+// 시나리오 39: arp_ignore=0, ARP passes normally
+// ============================================================
+#[test]
+fn test_arp_ignore_disabled() {
+    let (rules, tables) = default_routing();
+    // default sysctl has arp_ignore=0
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "arp-ignore-0".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Arp,
+            src_ip: None,
+            dst_ip: None,
+            protocol: IpProtocol::Other(0),
+            arp: Some(ArpFields {
+                operation: 1,
+                sender_mac: Some("00:aa:bb:cc:dd:ee".to_string()),
+                sender_ip: Some("192.168.1.100".parse().unwrap()),
+                target_mac: None,
+                target_ip: Some("192.168.1.1".parse().unwrap()), // not on eth0, but arp_ignore=0
+            }),
+            conntrack_state: ConntrackState::Untracked,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // arp_ignore=0, ARP is L2-only → local delivery
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 시나리오 40: Empty interfaces list → Drop "Unknown ingress"
+// ============================================================
+#[test]
+fn test_empty_interfaces_list() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "empty-interfaces".to_string(),
+        description: None,
+        interfaces: vec![],
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_unknown = result.trace.iter().any(|s| s.explain.contains("does not exist"));
+    assert!(has_unknown, "Should mention unknown ingress interface");
+}
+
+// ============================================================
+// 시나리오 41: MASQUERADE with IPv6 → src_ip changes to egress IPv6
+// ============================================================
+#[test]
+fn test_masquerade_ipv6() {
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: Some("00:11:22:33:44:55".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "fd00::1".parse().unwrap(),
+                prefix_len: 64,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+        Interface {
+            name: "eth1".to_string(),
+            index: 3,
+            mac: Some("00:11:22:33:44:66".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "fd01::1".parse().unwrap(),
+                prefix_len: 64,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+    ];
+
+    let rules = vec![
+        IpRule {
+            priority: 0,
+            selector: RuleSelector::default(),
+            action: RuleAction::Lookup(254),
+        },
+    ];
+    let tables = vec![RoutingTable {
+        id: 254,
+        name: Some("main".to_string()),
+        routes: vec![
+            Route {
+                destination: "fd00::/64".parse().unwrap(),
+                dev: Some("eth0".to_string()),
+                scope: RouteScope::Link,
+                ..default_route()
+            },
+            Route {
+                destination: "fd01::/64".parse().unwrap(),
+                dev: Some("eth1".to_string()),
+                scope: RouteScope::Link,
+                ..default_route()
+            },
+            Route {
+                destination: "::/0".parse().unwrap(),
+                gateway: Some("fd00::ffff".parse().unwrap()),
+                dev: Some("eth0".to_string()),
+                ..default_route()
+            },
+        ],
+    }];
+
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip6,
+                name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "postrouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Postrouting),
+                    priority: Some(100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Oif { name: "eth0".to_string() }],
+                        action: NfAction::Nat { action: NatAction::Masquerade { port: None } },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "masq-ipv6".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth1".to_string(),
+            ethertype: EtherType::Ipv6,
+            src_ip: Some("fd01::100".parse().unwrap()),
+            dst_ip: Some("2001:db8::1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(443),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+    let last_state = &result.trace.last().unwrap().state_after;
+    assert_eq!(last_state.src_ip, Some("fd00::1".parse::<IpAddr>().unwrap()));
+    assert!(last_state.snat_applied);
+}
+
+// ============================================================
+// 시나리오 42: Interface without addresses, MASQUERADE → src_ip unchanged
+// ============================================================
+#[test]
+fn test_interface_no_addresses_masquerade() {
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: Some("00:11:22:33:44:55".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "10.0.0.1".parse().unwrap(),
+                prefix_len: 24,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+        Interface {
+            name: "eth1".to_string(),
+            index: 3,
+            mac: Some("00:11:22:33:44:66".to_string()),
+            addresses: vec![], // no addresses
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+    ];
+
+    let rules = vec![
+        IpRule {
+            priority: 0,
+            selector: RuleSelector::default(),
+            action: RuleAction::Lookup(254),
+        },
+    ];
+    let tables = vec![RoutingTable {
+        id: 254,
+        name: Some("main".to_string()),
+        routes: vec![
+            Route {
+                destination: "10.0.0.0/24".parse().unwrap(),
+                dev: Some("eth0".to_string()),
+                scope: RouteScope::Link,
+                ..default_route()
+            },
+            Route {
+                destination: "0.0.0.0/0".parse().unwrap(),
+                gateway: Some("10.0.0.254".parse().unwrap()),
+                dev: Some("eth1".to_string()),
+                ..default_route()
+            },
+        ],
+    }];
+
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "postrouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Postrouting),
+                    priority: Some(100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Oif { name: "eth1".to_string() }],
+                        action: NfAction::Nat { action: NatAction::Masquerade { port: None } },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "masq-no-addr".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+    // eth1 has no addresses, so MASQUERADE can't change src_ip
+    let last_state = &result.trace.last().unwrap().state_after;
+    assert_eq!(last_state.src_ip, Some("10.0.0.100".parse::<IpAddr>().unwrap()));
 }
 
 // ============================================================

@@ -451,6 +451,20 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                                 });
                             }
                         }
+                    } else {
+                        // packet_length unknown — record informational step
+                        seq += 1;
+                        trace.push(TraceStep {
+                            seq,
+                            stage: PipelineStage::MtuCheck,
+                            description: "MTU check skipped".to_string(),
+                            state_before: state.clone(),
+                            state_after: state.clone(),
+                            state_changes: vec![],
+                            matched_rules: vec![],
+                            decision: StageDecision::Continue,
+                            explain: "MTU check skipped: packet length not specified".to_string(),
+                        });
                     }
                 }
             }

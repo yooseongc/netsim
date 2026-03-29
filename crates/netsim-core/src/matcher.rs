@@ -87,7 +87,15 @@ fn match_ip_addr(op: &MatchOp, value: &str, addr: Option<IpAddr>) -> bool {
         None => return false, // L2-only 패킷은 IP 매칭 실패
     };
 
-    // value가 네트워크 CIDR 표기인 경우
+    // comma-separated list (nftables set)
+    if matches!(op, MatchOp::In) || value.contains(',') {
+        return value
+            .split(',')
+            .map(|s| s.trim())
+            .any(|s| ip_value_contains(s, &addr));
+    }
+
+    // CIDR 표기 (e.g., "10.0.0.0/24")
     if let Ok(net) = value.parse::<IpNet>() {
         return match op {
             MatchOp::Eq => net.contains(&addr),
@@ -96,7 +104,7 @@ fn match_ip_addr(op: &MatchOp, value: &str, addr: Option<IpAddr>) -> bool {
         };
     }
 
-    // value가 단일 IP인 경우
+    // 단일 IP (e.g., "192.168.1.1" — ipnet은 CIDR 없이 파싱 실패)
     if let Ok(target) = value.parse::<IpAddr>() {
         return match op {
             MatchOp::Eq => addr == target,
@@ -105,23 +113,18 @@ fn match_ip_addr(op: &MatchOp, value: &str, addr: Option<IpAddr>) -> bool {
         };
     }
 
-    // comma-separated list (nftables set)
-    if matches!(op, MatchOp::In) {
-        return value
-            .split(',')
-            .map(|s| s.trim())
-            .any(|s| {
-                if let Ok(net) = s.parse::<IpNet>() {
-                    net.contains(&addr)
-                } else if let Ok(ip) = s.parse::<IpAddr>() {
-                    addr == ip
-                } else {
-                    false
-                }
-            });
-    }
-
     false
+}
+
+/// IP 값(CIDR 또는 단일 IP)이 주어진 주소를 포함하는지 확인
+fn ip_value_contains(value: &str, addr: &IpAddr) -> bool {
+    if let Ok(net) = value.parse::<IpNet>() {
+        net.contains(addr)
+    } else if let Ok(ip) = value.parse::<IpAddr>() {
+        *addr == ip
+    } else {
+        false
+    }
 }
 
 // --- Transport layer matching ---

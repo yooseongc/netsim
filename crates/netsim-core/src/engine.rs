@@ -10,14 +10,20 @@
 //!     LOCAL: INPUT chains → LOCAL_DELIVERY
 //!     FORWARD: FORWARD chains → POSTROUTING (SNAT/MASQ) → FORWARDED
 //!
-//! L2-only 패킷 (ARP, STP):
-//!   XDP만 거치고 netfilter/routing은 건너뛴다.
-//!   bridge 모드가 아닌 이상 로컬 처리 또는 드롭.
+//! sysctl 파라미터가 다음에 영향:
+//!   - ip_forward: 포워딩 허용 여부
+//!   - route_localnet: 127.0.0.0/8 라우팅 허용
+//!   - rp_filter: Reverse Path 필터링
+//!   - icmp_echo_ignore_all: ICMP echo 무시
+
+use std::net::IpAddr;
 
 use uuid::Uuid;
 
-use crate::model::packet::PacketState;
+use crate::model::interface::Interface;
+use crate::model::packet::{IpProtocol, PacketState};
 use crate::model::scenario::Scenario;
+use crate::model::sysctl::{RpFilterMode, SysctlConfig};
 use crate::pipeline::{self, StageResult};
 use crate::trace::{
     compute_state_changes, FinalVerdict, MatchedRuleRef, PipelineStage, SimulationResult,
@@ -30,6 +36,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     let mut trace = Vec::new();
     let mut all_matched_rules: Vec<MatchedRuleRef> = Vec::new();
     let mut seq: u32 = 0;
+    let sysctl = &scenario.sysctl;
 
     // --- Stage 1: XDP ---
     seq += 1;
@@ -37,7 +44,6 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     let result = pipeline::xdp::execute(&scenario.xdp, &mut state);
     trace.push(make_trace_step(seq, PipelineStage::Xdp, &state_before, &state, &result));
     all_matched_rules.extend(result.matched_rules.clone());
-    // XDP terminal: DROP, TX(=Redirect to same if), REDIRECT(=Redirect to other if)
     match &result.decision {
         StageDecision::Drop { .. } => {
             return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
@@ -50,16 +56,12 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             };
             return finalize(scenario, trace, all_matched_rules, verdict, &state);
         }
-        _ => {} // Continue, Accept → 다음 단계로
+        _ => {}
     }
 
     // L2-only 패킷은 XDP 이후 netfilter/routing 건너뛰기
     if state.ethertype.is_l2_only() {
         seq += 1;
-        let explain = format!(
-            "L2-only packet ({}) — bypasses netfilter and routing. Delivered locally for ARP processing.",
-            state.ethertype
-        );
         trace.push(TraceStep {
             seq,
             stage: PipelineStage::RoutingDecision,
@@ -69,9 +71,31 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             state_changes: vec![],
             matched_rules: vec![],
             decision: StageDecision::LocalDelivery,
-            explain,
+            explain: format!(
+                "L2-only packet ({}) — bypasses netfilter and routing.",
+                state.ethertype
+            ),
         });
         return finalize(scenario, trace, all_matched_rules, FinalVerdict::LocalDelivery, &state);
+    }
+
+    // --- sysctl: rp_filter (Reverse Path Filtering) ---
+    if let Some(drop_result) = check_rp_filter(
+        sysctl, &state, &scenario.ip_rules, &scenario.routing_tables, &scenario.interfaces,
+    ) {
+        seq += 1;
+        trace.push(TraceStep {
+            seq,
+            stage: PipelineStage::TcIngress,
+            description: "rp_filter check".to_string(),
+            state_before: state.clone(),
+            state_after: state.clone(),
+            state_changes: vec![],
+            matched_rules: vec![],
+            decision: drop_result.decision.clone(),
+            explain: drop_result.explain.clone(),
+        });
+        return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
     }
 
     // --- Stage 2: tc ingress ---
@@ -82,21 +106,19 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
 
     // --- Stage 3: conntrack lookup ---
     seq += 1;
-    let state_before = state.clone();
-    let ct_explain = format!(
-        "Conntrack lookup: packet classified as ct_state={} (user-declared)",
-        state.ct_state
-    );
     trace.push(TraceStep {
         seq,
         stage: PipelineStage::ConntrackIn,
         description: "conntrack lookup".to_string(),
-        state_before: state_before.clone(),
+        state_before: state.clone(),
         state_after: state.clone(),
         state_changes: vec![],
         matched_rules: vec![],
         decision: StageDecision::Continue,
-        explain: ct_explain,
+        explain: format!(
+            "Conntrack lookup: packet classified as ct_state={} (user-declared)",
+            state.ct_state
+        ),
     });
 
     // --- Stage 4: PREROUTING ---
@@ -107,6 +129,33 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     all_matched_rules.extend(result.matched_rules.clone());
     if let Some(verdict) = terminal_verdict(&result.decision) {
         return finalize(scenario, trace, all_matched_rules, verdict, &state);
+    }
+
+    // --- sysctl: route_localnet check ---
+    // DNAT 후 dst가 127.0.0.0/8이면 route_localnet 필요
+    if let Some(dst) = state.dst_ip {
+        if is_loopback(&dst) && !sysctl.is_route_localnet(&state.ingress_if) {
+            seq += 1;
+            trace.push(TraceStep {
+                seq,
+                stage: PipelineStage::RoutingDecision,
+                description: "route_localnet check".to_string(),
+                state_before: state.clone(),
+                state_after: state.clone(),
+                state_changes: vec![],
+                matched_rules: vec![],
+                decision: StageDecision::Drop {
+                    reason: "Destination is loopback but route_localnet is disabled".to_string(),
+                },
+                explain: format!(
+                    "Packet destination {} is in loopback range. \
+                     net.ipv4.conf.{}.route_localnet=0 (disabled). \
+                     Enable route_localnet to allow DNAT to 127.0.0.1.",
+                    dst, state.ingress_if
+                ),
+            });
+            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+        }
     }
 
     // --- Stage 5: Routing Decision ---
@@ -123,6 +172,28 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
 
     match &result.decision {
         StageDecision::LocalDelivery => {
+            // --- sysctl: icmp_echo_ignore_all ---
+            if sysctl.icmp_echo_ignore_all()
+                && state.protocol.is_icmp()
+                && is_icmp_echo_request(&state)
+            {
+                seq += 1;
+                trace.push(TraceStep {
+                    seq,
+                    stage: PipelineStage::LocalInput,
+                    description: "icmp_echo_ignore_all".to_string(),
+                    state_before: state.clone(),
+                    state_after: state.clone(),
+                    state_changes: vec![],
+                    matched_rules: vec![],
+                    decision: StageDecision::Drop {
+                        reason: "ICMP echo ignored by icmp_echo_ignore_all=1".to_string(),
+                    },
+                    explain: "net.ipv4.icmp_echo_ignore_all=1 — all ICMP echo requests silently dropped".to_string(),
+                });
+                return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+            }
+
             // --- Stage 6a: INPUT chains ---
             seq += 1;
             let state_before = state.clone();
@@ -135,6 +206,28 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::LocalDelivery, &state)
         }
         StageDecision::ForwardTo { .. } => {
+            // --- sysctl: ip_forward check ---
+            if !sysctl.is_forwarding_enabled(&state.ingress_if) {
+                seq += 1;
+                trace.push(TraceStep {
+                    seq,
+                    stage: PipelineStage::Forward,
+                    description: "ip_forward disabled".to_string(),
+                    state_before: state.clone(),
+                    state_after: state.clone(),
+                    state_changes: vec![],
+                    matched_rules: vec![],
+                    decision: StageDecision::Drop {
+                        reason: "IP forwarding disabled".to_string(),
+                    },
+                    explain: format!(
+                        "net.ipv4.ip_forward=0 — packet requires forwarding but forwarding is disabled on {}",
+                        state.ingress_if
+                    ),
+                });
+                return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+            }
+
             // --- Stage 6b: FORWARD chains ---
             seq += 1;
             let state_before = state.clone();
@@ -184,13 +277,90 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::Redirect, &state)
         }
         _ => {
-            // Continue, Accept 등 routing에서 예상치 못한 결정
             finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state)
         }
     }
 }
 
-/// StageDecision이 파이프라인을 종료하는 결정인지 확인하고 FinalVerdict 변환
+/// Reverse Path Filter 검사
+fn check_rp_filter(
+    sysctl: &SysctlConfig,
+    state: &PacketState,
+    ip_rules: &[crate::model::policy_routing::IpRule],
+    routing_tables: &[crate::model::routing::RoutingTable],
+    interfaces: &[Interface],
+) -> Option<StageResult> {
+    let mode = sysctl.rp_filter_mode(&state.ingress_if);
+    if matches!(mode, RpFilterMode::Off) {
+        return None;
+    }
+
+    let src_ip = match state.src_ip {
+        Some(ip) => ip,
+        None => return None, // L2-only, skip
+    };
+
+    // src_ip에 대해 역방향 라우팅 조회
+    let reverse_result = pipeline::routing::reverse_path_lookup(
+        ip_rules, routing_tables, interfaces, &src_ip,
+    );
+
+    match mode {
+        RpFilterMode::Strict => {
+            // strict: 역라우팅 결과의 egress가 ingress와 같아야 함
+            match reverse_result {
+                Some(egress_if) if egress_if == state.ingress_if => None,
+                Some(egress_if) => Some(StageResult::drop(
+                    format!("rp_filter strict: reverse route for {} via {} != ingress {}", src_ip, egress_if, state.ingress_if),
+                    format!(
+                        "Reverse path filter (strict): source {} would be routed via {}, but arrived on {}. \
+                         Set net.ipv4.conf.{}.rp_filter=0 to disable.",
+                        src_ip, egress_if, state.ingress_if, state.ingress_if
+                    ),
+                )),
+                None => Some(StageResult::drop(
+                    format!("rp_filter strict: no reverse route for {}", src_ip),
+                    format!(
+                        "Reverse path filter (strict): no route found for source {}. \
+                         Set net.ipv4.conf.{}.rp_filter=0 to disable.",
+                        src_ip, state.ingress_if
+                    ),
+                )),
+            }
+        }
+        RpFilterMode::Loose => {
+            // loose: 어떤 인터페이스든 역라우팅 가능하면 통과
+            match reverse_result {
+                Some(_) => None,
+                None => Some(StageResult::drop(
+                    format!("rp_filter loose: no reverse route for {}", src_ip),
+                    format!(
+                        "Reverse path filter (loose): no route found for source {}. \
+                         Set net.ipv4.conf.{}.rp_filter=0 to disable.",
+                        src_ip, state.ingress_if
+                    ),
+                )),
+            }
+        }
+        RpFilterMode::Off => None,
+    }
+}
+
+fn is_loopback(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
+}
+
+fn is_icmp_echo_request(state: &PacketState) -> bool {
+    match state.protocol {
+        IpProtocol::Icmp => state.icmp_type == Some(8),
+        IpProtocol::Icmpv6 => state.icmp_type == Some(128),
+        _ => false,
+    }
+}
+
 fn terminal_verdict(decision: &StageDecision) -> Option<FinalVerdict> {
     match decision {
         StageDecision::Drop { .. } => Some(FinalVerdict::Drop),
@@ -201,7 +371,6 @@ fn terminal_verdict(decision: &StageDecision) -> Option<FinalVerdict> {
     }
 }
 
-/// SimulationResult 생성
 fn finalize(
     _scenario: &Scenario,
     trace: Vec<TraceStep>,
@@ -210,8 +379,6 @@ fn finalize(
     state: &PacketState,
 ) -> SimulationResult {
     let nat_applied = state.dnat_applied || state.snat_applied;
-
-    // routing 단계에서 next_hop 추출
     let next_hop = trace.iter()
         .find(|s| matches!(s.stage, PipelineStage::RoutingDecision))
         .and_then(|s| match &s.decision {
@@ -235,7 +402,6 @@ fn finalize(
     }
 }
 
-/// TraceStep 생성 헬퍼
 fn make_trace_step(
     seq: u32,
     stage: PipelineStage,

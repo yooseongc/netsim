@@ -323,10 +323,11 @@ fn selector_matches(selector: &RuleSelector, state: &PacketState) -> bool {
         }
     }
 
-    // fwmark
+    // fwmark: Linux 동작 — (packet_mark & mask) == fwmark
+    // fwmark 값은 이미 mask가 적용된 상태로 지정됨
     if let Some(fwmark) = selector.fwmark {
         let mask = selector.fwmask.unwrap_or(0xFFFF_FFFF);
-        if (state.mark & mask) != (fwmark & mask) {
+        if (state.mark & mask) != fwmark {
             return false;
         }
     }
@@ -382,6 +383,41 @@ fn selector_matches(selector: &RuleSelector, state: &PacketState) -> bool {
     }
 
     true
+}
+
+/// Reverse Path Lookup: src_ip에 대해 역방향 라우팅을 수행하여 egress 인터페이스 반환
+/// rp_filter 검사에 사용
+pub fn reverse_path_lookup(
+    ip_rules: &[IpRule],
+    routing_tables: &[RoutingTable],
+    _interfaces: &[Interface],
+    src_ip: &IpAddr,
+) -> Option<String> {
+    let mut sorted_rules: Vec<&IpRule> = ip_rules.iter().collect();
+    sorted_rules.sort_by_key(|r| r.priority);
+
+    for rule in &sorted_rules {
+        // reverse lookup에서는 selector를 최소한으로 확인 (from/to만)
+        match &rule.action {
+            RuleAction::Lookup(table_id) => {
+                let table = routing_tables.iter().find(|t| t.id == *table_id)?;
+                if let Some(route) = longest_prefix_match(&table.routes, src_ip) {
+                    match &route.route_type {
+                        RouteType::Unicast | RouteType::Local => {
+                            return route.dev.clone();
+                        }
+                        RouteType::Throw => continue,
+                        _ => return None,
+                    }
+                }
+            }
+            RuleAction::Blackhole | RuleAction::Unreachable | RuleAction::Prohibit => {
+                return None;
+            }
+        }
+    }
+
+    None
 }
 
 /// Longest prefix match: 가장 구체적인 (prefix length가 큰) 매칭 경로를 반환

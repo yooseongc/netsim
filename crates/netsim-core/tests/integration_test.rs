@@ -13,6 +13,7 @@ use netsim_core::model::packet::*;
 use netsim_core::model::policy_routing::*;
 use netsim_core::model::routing::*;
 use netsim_core::model::scenario::Scenario;
+use netsim_core::model::sysctl::SysctlConfig;
 use netsim_core::model::xdp::*;
 use netsim_core::trace::FinalVerdict;
 
@@ -162,6 +163,7 @@ fn test_local_delivery_tcp() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -196,6 +198,7 @@ fn test_forwarding_udp() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -229,6 +232,7 @@ fn test_local_delivery_icmp() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -294,6 +298,7 @@ fn test_dnat_forwarding() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -364,6 +369,7 @@ fn test_forward_drop_by_firewall() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -420,6 +426,7 @@ fn test_snat_masquerade() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth1".to_string(),
             ethertype: EtherType::Ipv4,
@@ -474,6 +481,7 @@ fn test_xdp_drop() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp,
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -597,6 +605,7 @@ fn test_policy_routing_fwmark() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -646,6 +655,7 @@ fn test_blackhole_route() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -678,6 +688,7 @@ fn test_arp_packet_l2_only() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Arp,
@@ -747,6 +758,7 @@ fn test_dnat_icmp_no_port_change() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -785,6 +797,7 @@ fn test_ttl_expired() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -818,6 +831,7 @@ fn test_vrrp_local_delivery() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -877,6 +891,7 @@ fn test_reject_verdict() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -928,6 +943,7 @@ fn test_chain_default_policy_drop() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -994,6 +1010,7 @@ fn test_iptables_rules() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1080,6 +1097,7 @@ fn test_multiple_chains_priority_order() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1140,6 +1158,7 @@ fn test_established_passes_firewall() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1201,6 +1220,7 @@ fn test_redirect_nat() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1276,6 +1296,7 @@ fn test_ipv6_local_delivery() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv6,
@@ -1336,6 +1357,7 @@ fn test_icmpv6_neighbour_solicitation() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv6,
@@ -1378,6 +1400,7 @@ fn test_xdp_tx() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp,
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1410,6 +1433,7 @@ fn test_next_hop_in_summary() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth1".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1473,6 +1497,7 @@ fn test_neq_match() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1506,6 +1531,7 @@ fn test_stp_packet() {
         ip_rules: rules,
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Stp,
@@ -1574,6 +1600,7 @@ fn test_nftables_and_iptables_mixed() {
         ip_rules: rules,
         netfilter,
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1590,6 +1617,276 @@ fn test_nftables_and_iptables_mixed() {
     let result = engine::run(&scenario);
     // iptables filter(prio=0) → dport 80 accept → nft(prio=10) → accept policy
     assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 시나리오 27: ip_forward=0 → 포워딩 차단
+// ============================================================
+#[test]
+fn test_sysctl_ip_forward_disabled() {
+    let (rules, tables) = default_routing();
+    let mut sysctl = SysctlConfig::default();
+    sysctl.ipv4.ip_forward = false;
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "no-forward".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("192.168.1.100".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    // trace에 ip_forward 관련 설명이 있어야 함
+    let has_fwd_msg = result.trace.iter().any(|s| s.explain.contains("ip_forward"));
+    assert!(has_fwd_msg, "Should mention ip_forward in trace");
+}
+
+// ============================================================
+// 시나리오 28: route_localnet=0 → DNAT to 127.0.0.1 차단
+// ============================================================
+#[test]
+fn test_sysctl_route_localnet_blocks_loopback_dnat() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "prerouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Prerouting),
+                    priority: Some(-100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Transport {
+                            protocol: TransportProto::Tcp,
+                            field: TransportField::Dport,
+                            op: MatchOp::Eq,
+                            value: "80".to_string(),
+                        }],
+                        action: NfAction::Nat { action: NatAction::Dnat {
+                            addr: Some("127.0.0.1".parse().unwrap()),
+                            port: Some(8080),
+                        }},
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    // route_localnet=false (기본값) → 127.0.0.1 DNAT 차단
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "no-route-localnet".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables.clone(),
+        ip_rules: rules.clone(),
+        netfilter: netfilter.clone(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(), // route_localnet=false
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_localnet_msg = result.trace.iter().any(|s| s.explain.contains("route_localnet"));
+    assert!(has_localnet_msg);
+}
+
+// ============================================================
+// 시나리오 29: route_localnet=1 → DNAT to 127.0.0.1 허용
+// ============================================================
+#[test]
+fn test_sysctl_route_localnet_allows_loopback_dnat() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "prerouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Prerouting),
+                    priority: Some(-100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Transport {
+                            protocol: TransportProto::Tcp,
+                            field: TransportField::Dport,
+                            op: MatchOp::Eq,
+                            value: "80".to_string(),
+                        }],
+                        action: NfAction::Nat { action: NatAction::Dnat {
+                            addr: Some("127.0.0.1".parse().unwrap()),
+                            port: Some(8080),
+                        }},
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let mut sysctl = SysctlConfig::default();
+    sysctl.interface_conf.insert("eth0".to_string(),
+        netsim_core::model::sysctl::InterfaceSysctl {
+            route_localnet: true,
+            ..Default::default()
+        });
+
+    // local 테이블에 127.0.0.1 라우트 추가
+    let mut tables = tables;
+    if let Some(local_table) = tables.iter_mut().find(|t| t.id == 255) {
+        local_table.routes.push(Route {
+            destination: "127.0.0.1/32".parse().unwrap(),
+            route_type: RouteType::Local,
+            dev: Some("lo".to_string()),
+            ..default_route()
+        });
+    }
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "route-localnet-enabled".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        sysctl,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // route_localnet=true → DNAT to 127.0.0.1 허용 → local delivery
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 시나리오 30: icmp_echo_ignore_all=1 → ICMP echo drop
+// ============================================================
+#[test]
+fn test_sysctl_icmp_echo_ignore_all() {
+    let (rules, tables) = default_routing();
+    let mut sysctl = SysctlConfig::default();
+    sysctl.ipv4.icmp_echo_ignore_all = true;
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "icmp-ignore".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Icmp,
+            icmp_type: Some(8), // echo request
+            icmp_code: Some(0),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_icmp_msg = result.trace.iter().any(|s| s.explain.contains("icmp_echo_ignore"));
+    assert!(has_icmp_msg);
+}
+
+// ============================================================
+// 시나리오 31: rp_filter=strict → 소스 검증 실패
+// ============================================================
+#[test]
+fn test_sysctl_rp_filter_strict() {
+    let (rules, tables) = default_routing();
+    let mut sysctl = SysctlConfig::default();
+    sysctl.interface_conf.insert("eth0".to_string(),
+        netsim_core::model::sysctl::InterfaceSysctl {
+            rp_filter: netsim_core::model::sysctl::RpFilterMode::Strict,
+            ..Default::default()
+        });
+
+    // 192.168.1.100은 eth1 서브넷인데 eth0으로 들어옴 → strict rp_filter 실패
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "rp-filter-strict".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("192.168.1.100".parse().unwrap()), // eth1 subnet
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    let has_rp_msg = result.trace.iter().any(|s| s.explain.contains("Reverse path filter"));
+    assert!(has_rp_msg);
 }
 
 // ============================================================

@@ -8,6 +8,7 @@ pub mod packet;
 pub mod conntrack;
 pub mod scenario;
 pub mod session;
+pub mod sysctl;
 
 // Re-exports
 pub use interface::*;
@@ -20,3 +21,4 @@ pub use packet::*;
 pub use conntrack::*;
 pub use scenario::*;
 pub use session::*;
+pub use sysctl::*;

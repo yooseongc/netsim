@@ -8,6 +8,7 @@ use netsim_core::model::policy_routing::*;
 use netsim_core::model::routing::*;
 use netsim_core::model::scenario::Scenario;
 use netsim_core::model::session::*;
+use netsim_core::model::sysctl::SysctlConfig;
 use netsim_core::model::xdp::*;
 use netsim_core::session_engine::{self, SessionVerdict};
 use netsim_core::trace::FinalVerdict;
@@ -127,6 +128,7 @@ fn base_scenario() -> Scenario {
         ip_rules: rules,
         netfilter: NetfilterConfig::default(),
         xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
         packet: PacketDef::default(), // placeholder, will be overridden
     }
 }

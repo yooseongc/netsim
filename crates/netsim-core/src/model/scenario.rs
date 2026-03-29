@@ -5,6 +5,7 @@ use super::netfilter::NetfilterConfig;
 use super::packet::PacketDef;
 use super::policy_routing::IpRule;
 use super::routing::RoutingTable;
+use super::sysctl::SysctlConfig;
 use super::xdp::XdpConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -24,6 +25,9 @@ pub struct Scenario {
     pub netfilter: NetfilterConfig,
     #[serde(default)]
     pub xdp: XdpConfig,
+    /// 커널 파라미터 (sysctl)
+    #[serde(default)]
+    pub sysctl: SysctlConfig,
     pub packet: PacketDef,
 }
 

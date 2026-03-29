@@ -32,6 +32,10 @@
 - [x] 세션 모델 구현 (TCP handshake, ICMP echo, UDP exchange, 커스텀)
 - [x] 세션 엔진 구현 (NAT 매핑 전파, 방화벽 실패 감지)
 - [x] 세션 테스트 6개 (TCP handshake, ICMP ping, DNAT+TCP, 방화벽 차단, UDP DNS, full TCP)
+- [x] 3차 버그 수정 (fwmark mask 비교, IpAddr 파싱 복원)
+- [x] sysctl 커널 파라미터 모델 (ip_forward, route_localnet, rp_filter, icmp_echo_ignore 등)
+- [x] 엔진에 sysctl 통합 (ip_forward, route_localnet, rp_filter, icmp_echo_ignore_all)
+- [x] sysctl 테스트 5개 (ip_forward off, route_localnet on/off, icmp_echo_ignore, rp_filter strict)
 
 ---
 

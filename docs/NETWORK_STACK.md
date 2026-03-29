@@ -27,6 +27,12 @@ netsim 엔진은 두 가지 패킷 경로를 시뮬레이션한다.
                      존재? UP? 브릿지 멤버?
                              |
               +----- 브릿지 멤버? -----+
+              |
+   [InterfaceCheck] Physical NIC 수신 프레임 크기
+    (Physical NIC만: pkt_len > max(mtu+18, 9216) --> DROP)
+    ※ 가상 인터페이스(veth, bridge, tun, tap)는 건너뜀
+              |
+         브릿지 멤버?
               |  (master 존재)         |  (아님)
               |                        |
    bridge_nf_call_iptables?            |
@@ -35,9 +41,6 @@ netsim 엔진은 두 가지 패킷 경로를 시뮬레이션한다.
     L2 포워딩 --> FORWARDED            |
       true:                            |
       계속 v  <------------------------+
-              |
-   [InterfaceCheck] Physical NIC 수신 프레임 크기
-    (Physical NIC만: pkt_len > max(mtu+18, 9216) --> DROP)
               |
            [XDP]
     XDP_PASS / XDP_DROP / XDP_TX / XDP_REDIRECT
@@ -59,7 +62,7 @@ netsim 엔진은 두 가지 패킷 경로를 시뮬레이션한다.
               |
        [PreRouting]
         PREROUTING 체인 중 priority > -200
-        (mangle -150, dnat -100 등)
+        (mangle -150, nat/dstnat -100, filter 0, security 50, nat/srcnat 100)
         * TPROXY 적용 시 tproxy_applied=true 설정 후 계속 진행
               |
         [RpFilter]
@@ -140,9 +143,11 @@ Ingress 경로의 첫 번째 단계. 여러 하위 검사를 포함한다.
 |-----------|------|------|
 | (a) 인터페이스 존재 | ingress IF가 시나리오에 없음 | DROP |
 | (b) 인터페이스 상태 | ingress IF가 DOWN | DROP |
-| (c) 브릿지 멤버 감지 | `iface.master`가 존재 | Continue (정보 기록) |
-| (d) Physical NIC 프레임 크기 | `kind=Physical`, `pkt_len > max(mtu+18, 9216)` | DROP |
+| (c) Physical NIC 프레임 크기 | `kind=Physical`, `pkt_len > max(mtu+18, 9216)` | DROP |
+| (d) 브릿지 멤버 감지 | `iface.master`가 존재 | Continue (정보 기록) |
 | (e) Egress IF 검증 (포워딩 시) | egress IF 없음 또는 DOWN | DROP |
+
+**(c)는 (d)보다 먼저 실행** — 물리 NIC가 프레임을 수신할 수 없으면 브릿지 멤버인지 여부는 무의미하므로.
 
 **Physical NIC 프레임 크기 검사**: 물리 NIC는 드라이버 수준에서 최대 수신 프레임 크기를 제한한다. `max(mtu + 18, 9216)` 바이트를 초과하면 DROP. 가상 인터페이스(veth, bridge, tun, tap)는 이 검사를 건너뛴다.
 
@@ -210,7 +215,17 @@ RAW 테이블 이후, mangle/nat 이전에 실행. 패킷의 conntrack 상태(`c
 
 `PipelineStage::PreRouting`
 
-PREROUTING 체인 중 **priority > -200**인 체인을 평가한다. mangle(-150), DNAT(-100) 등이 여기에 해당한다.
+PREROUTING 체인 중 **priority > -200**인 체인을 평가한다.
+
+| 테이블 타입 | priority | 주요 역할 |
+|------------|----------|----------|
+| mangle | -150 | mark 변경, DSCP 수정 |
+| nat/dstnat | -100 | DNAT, REDIRECT, TPROXY |
+| filter | 0 | 패킷 필터링 (nftables에서 prerouting hook에 filter chain 가능) |
+| security | 50 | SELinux 보안 라벨링 |
+| nat/srcnat | 100 | (PREROUTING에서는 일반적이지 않음) |
+
+**참고**: iptables의 filter 테이블은 INPUT/FORWARD/OUTPUT hook에만 chain이 있지만, nftables에서는 filter type chain을 prerouting hook에도 생성할 수 있다 (`type filter hook prerouting priority filter`). 이 경우 priority=0으로 post-conntrack 그룹에 포함된다.
 
 **TPROXY 특수 처리**: TPROXY NAT 액션이 적용되면 `tproxy_applied = true`로 설정하고 패킷을 Stolen으로 처리하지 않는다. 대신 라우팅 --> INPUT 경로를 통해 로컬 전달된다. TPROXY는 mark를 설정하여 policy routing이 local 테이블로 패킷을 전달하도록 한다.
 

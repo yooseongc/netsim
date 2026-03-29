@@ -1,0 +1,13 @@
+[package]
+name = "netsim-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+ipnet = { workspace = true }
+chrono = { workspace = true }

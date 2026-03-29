@@ -1,0 +1,37 @@
+# netsim 진행 사항
+
+## 현재 단계
+
+**2단계: 프로젝트 초기화** — 완료
+
+---
+
+## 진행 이력
+
+### 2026-03-29
+
+- [x] 요구사항 분석 (spec/REQUIREMENT.md, spec/TECH.md)
+- [x] 백엔드 설계안 작성 (docs/DESIGN_BACKEND.md)
+- [x] 프론트엔드 설계안 작성 (docs/DESIGN_FRONTEND.md)
+- [x] API 명세 작성 (docs/API.md)
+- [x] 스타일 가이드 작성 (docs/STYLE.md)
+- [x] 빌드/실행 가이드 작성 (docs/DEV.md)
+- [x] 테스트 정의 작성 (docs/TEST.md)
+- [x] Rust workspace 초기화 (3 crates + IR 모델 정의 + 컴파일 확인)
+- [x] Frontend scaffold 생성 (React + TypeScript + Vite + Tailwind + 빌드 확인)
+- [x] Dockerfile 작성 (멀티스테이지)
+
+---
+
+## 전체 로드맵
+
+| 단계 | 내용 | 상태 |
+|------|------|------|
+| 1단계 | 설계 문서 작성 | 완료 |
+| 2단계 | 프로젝트 초기화 (Rust workspace + Frontend + Docker) | 완료 |
+| 3단계 | 코어 모델 구현 (netsim-core IR) | 대기 |
+| 4단계 | 시뮬레이션 엔진 구현 | 대기 |
+| 5단계 | 파서 구현 (netsim-parser) | 대기 |
+| 6단계 | 웹 서버 구현 (netsim-server) | 대기 |
+| 7단계 | 프론트엔드 구현 | 대기 |
+| 8단계 | 통합 및 배포 | 대기 |

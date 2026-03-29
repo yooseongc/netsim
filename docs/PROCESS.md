@@ -55,6 +55,17 @@
   - FinalVerdict::Sent 추가
   - evaluate_chains_subset() 헬퍼 추가
   - 기존 120개 테스트 전체 통과 유지
+- [x] 엔진 Phase 6+7: Bridge NF 파이프라인 + Conntrack/Loopback/NAT 1-time + Endpoint Role Model
+  - Phase 6: bridge_nf_call_iptables=true 시 br_nf PREROUTING/FORWARD/POSTROUTING 파이프라인 실행
+  - Phase 7: conntrack 엔트리 모델 (NatTuple, DnatMapping, SnatMapping), established 커넥션에 대한 NAT 1-time 적용
+  - Phase 7: run_output() 로컬 주소 대상 시 LoopbackDelivery → INPUT → LocalDelivery 경로
+  - Endpoint Role Model: EndpointRole (LocalClient/RemoteClient/LocalServer/RemoteServer/LocalProxy/LocalTProxy)
+  - Topology + TrafficFlow → SimulationRun 확장 로직 (flow.rs)
+  - PipelineStage 추가: BrNfPrerouting, BrNfForward, BrNfPostrouting, LoopbackDelivery
+  - conntrack_entry 필드를 PipelineContext에 추가
+  - Scenario에 topology 옵션 필드 추가
+  - 테스트 4개 추가: bridge_nf_pipeline, conntrack_nat_established, loopback_delivery, flow_remote_to_local
+  - 기존 76개 + 신규 4개 = 총 80개 테스트 전체 통과
 - [x] 엔진 Phase 4+5: 라우팅 재평가 + TPROXY 로컬 전달
   - Phase 4: PipelineStage::Reroute 추가, run()에서 PREROUTING 후 mark/dst 변경 감지, run_output()에서 OUTPUT mark 변경 시 재라우팅 트레이스 기록
   - Phase 5: TPROXY 적용 시 routing/route_localnet 우회하여 강제 로컬 전달 (skb->sk 소켓 할당 시뮬레이션)
@@ -97,6 +108,7 @@
 | 3단계 | 코어 모델 구현 (netsim-core IR) | 완료 |
 | 4단계 | 시뮬레이션 엔진 구현 | 완료 |
 | 5단계 | 파서 구현 (netsim-parser) | 완료 |
-| 6단계 | 웹 서버 구현 (netsim-server) | 대기 |
-| 7단계 | 프론트엔드 구현 | 진행 중 |
-| 8단계 | 통합 및 배포 | 대기 |
+| 6단계 | 웹 서버 구현 (netsim-server) | 완료 |
+| 7단계 | 프론트엔드 구현 | 완료 |
+| 엔진 개편 | Phase 1~7 (PipelineContext, stages, chain_eval, routing 재호출, TPROXY, bridge NF, conntrack, loopback, endpoint roles) | 완료 |
+| 8단계 | 문서 분리 (docs/nstack/) + 통합 배포 | 진행 중 |

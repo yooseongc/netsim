@@ -2,7 +2,7 @@
 
 ## 현재 단계
 
-**4단계: 시뮬레이션 엔진 구현** — 완료
+**7단계: 프론트엔드 구현** — 진행 중
 
 ---
 
@@ -55,6 +55,17 @@
   - FinalVerdict::Sent 추가
   - evaluate_chains_subset() 헬퍼 추가
   - 기존 120개 테스트 전체 통과 유지
+- [x] 7단계: 프론트엔드 MVP 구현
+  - TypeScript 타입 정의 (project, scenario, trace — Rust IR 미러)
+  - API 클라이언트 (fetch 래퍼, 에러 처리)
+  - ProjectListPage (카드 그리드, 생성 다이얼로그, 삭제)
+  - ScenarioEditorPage (YAML 텍스트 에디터, Save/Run 버튼)
+  - SimulationResultPage (Summary 카드 + Pipeline Flow 타임라인)
+  - Trace 시각화 컴포넌트 (PipelineFlow, TraceStepCard, StateDiffView, VerdictBadge)
+  - AppShell 레이아웃 (Header + Sidebar + 라우팅)
+  - SimulationContext (결과 전달용 React Context)
+  - lucide-react 아이콘 추가
+  - pnpm build 통과 확인
 
 ---
 
@@ -68,5 +79,5 @@
 | 4단계 | 시뮬레이션 엔진 구현 | 완료 |
 | 5단계 | 파서 구현 (netsim-parser) | 완료 |
 | 6단계 | 웹 서버 구현 (netsim-server) | 대기 |
-| 7단계 | 프론트엔드 구현 | 대기 |
+| 7단계 | 프론트엔드 구현 | 진행 중 |
 | 8단계 | 통합 및 배포 | 대기 |

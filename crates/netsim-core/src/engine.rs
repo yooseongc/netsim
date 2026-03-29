@@ -16,6 +16,7 @@
 //!   - rp_filter: Reverse Path 필터링
 //!   - icmp_echo_ignore_all: ICMP echo 무시
 
+use crate::model::conntrack::{ConntrackEntry, ConntrackState, DnatMapping, NatTuple, SnatMapping};
 use crate::model::scenario::Scenario;
 use crate::pipeline::{self, PipelineContext};
 use crate::pipeline::context::StageOutcome;
@@ -57,6 +58,19 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     // --- Bridge member check (after XDP, before L3 processing) ---
     if let StageOutcome::Terminal(v) = stages::bridge::check_bridge(&mut ctx) {
         return ctx.finalize(v);
+    }
+
+    // If bridge_nf_call_iptables=true and ingress is a bridge member, run bridge nf pipeline
+    {
+        let is_bridge_member = crate::model::interface::find_interface(&ctx.scenario.interfaces, &ctx.packet.ingress_if)
+            .and_then(|iface| iface.master.as_ref().map(|_| true))
+            .unwrap_or(false);
+        if is_bridge_member && ctx.scenario.sysctl.bridge_nf_call_iptables {
+            if let StageOutcome::Terminal(v) = stages::bridge::execute_bridge_nf_pipeline(&mut ctx) {
+                return ctx.finalize(v);
+            }
+            // Continue to normal IP stack
+        }
     }
 
     // --- ARP processing (after XDP, before L2 bypass) ---
@@ -123,8 +137,21 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             ),
         );
 
+        // (b-1) Conntrack NAT 1-time: for established connections, apply stored NAT tuple
+        // instead of re-evaluating NAT chains
+        let conntrack_nat_applied = apply_conntrack_nat_if_established(&mut ctx);
+        if conntrack_nat_applied {
+            ctx.record_info_step(
+                PipelineStage::PreRouting,
+                "conntrack NAT tuple (established)",
+                StageDecision::Continue,
+                "Applying conntrack NAT tuple for established/related connection — \
+                 skipping NAT chain evaluation.",
+            );
+        }
+
         // (c) Evaluate post-conntrack chains (mangle, nat, etc.)
-        {
+        if !conntrack_nat_applied {
             let state_before = ctx.packet.clone();
             let result = pipeline::evaluate_chains_subset(
                 &post_ct_chains,
@@ -140,6 +167,9 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             } else if let Some(verdict) = terminal_verdict(&result.decision) {
                 return ctx.finalize(verdict);
             }
+
+            // Store NAT mapping in conntrack for future established packets
+            store_nat_to_conntrack(&mut ctx);
         }
     }
 
@@ -400,6 +430,28 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
             StageDecision::Reject { .. } => {
                 return ctx.finalize(FinalVerdict::Rejected);
             }
+            StageDecision::LocalDelivery => {
+                // Loopback path: output to a local address → INPUT → LocalDelivery
+                ctx.record_info_step(
+                    PipelineStage::LoopbackDelivery,
+                    "loopback delivery",
+                    StageDecision::Continue,
+                    "Output packet destination is a local address — \
+                     packet enters loopback path (OUTPUT → routing → INPUT → LOCAL_DELIVERY).",
+                );
+                // Execute INPUT chains
+                let state_before = ctx.packet.clone();
+                let input_result = pipeline::local_input::execute(
+                    &scenario.netfilter,
+                    &mut ctx.packet,
+                    &scenario.interfaces,
+                );
+                ctx.record_step(PipelineStage::LocalInput, &state_before, &input_result);
+                if let Some(v) = terminal_verdict(&input_result.decision) {
+                    return ctx.finalize(v);
+                }
+                return ctx.finalize(FinalVerdict::LocalDelivery);
+            }
             _ => {}
         }
     }
@@ -463,4 +515,81 @@ fn terminal_verdict(decision: &StageDecision) -> Option<FinalVerdict> {
         StageDecision::Redirect { .. } => Some(FinalVerdict::Redirect),
         _ => None,
     }
+}
+
+/// Public version of terminal_verdict for use by bridge pipeline
+pub fn terminal_verdict_from_decision(decision: &StageDecision) -> Option<FinalVerdict> {
+    terminal_verdict(decision)
+}
+
+/// Apply stored conntrack NAT tuple for established/related connections.
+/// Returns true if NAT was applied from conntrack (skipping chain evaluation).
+fn apply_conntrack_nat_if_established(ctx: &mut PipelineContext) -> bool {
+    if !matches!(ctx.packet.ct_state, ConntrackState::Established | ConntrackState::Related) {
+        return false;
+    }
+    if let Some(entry) = &ctx.conntrack_entry {
+        if let Some(tuple) = &entry.nat_tuple {
+            // Apply DNAT from tuple
+            if let Some(dnat) = &tuple.dnat {
+                ctx.packet.dst_ip = Some(dnat.translated_dst_ip);
+                if ctx.packet.has_ports() {
+                    ctx.packet.dst_port = dnat.translated_dst_port;
+                }
+                ctx.packet.dnat_applied = true;
+                if ctx.packet.original_dst_ip.is_none() {
+                    ctx.packet.original_dst_ip = Some(dnat.original_dst_ip);
+                    ctx.packet.original_dst_port = dnat.original_dst_port;
+                }
+            }
+            // Apply SNAT from tuple
+            if let Some(snat) = &tuple.snat {
+                ctx.packet.src_ip = Some(snat.translated_src_ip);
+                if ctx.packet.has_ports() {
+                    ctx.packet.src_port = snat.translated_src_port;
+                }
+                ctx.packet.snat_applied = true;
+                if ctx.packet.original_src_ip.is_none() {
+                    ctx.packet.original_src_ip = Some(snat.original_src_ip);
+                    ctx.packet.original_src_port = snat.original_src_port;
+                }
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Store NAT mapping from current packet state into conntrack entry.
+fn store_nat_to_conntrack(ctx: &mut PipelineContext) {
+    if !ctx.packet.dnat_applied && !ctx.packet.snat_applied {
+        return;
+    }
+
+    let dnat = if ctx.packet.dnat_applied {
+        Some(DnatMapping {
+            original_dst_ip: ctx.packet.original_dst_ip.unwrap_or_else(|| ctx.packet.dst_ip.unwrap()),
+            original_dst_port: ctx.packet.original_dst_port,
+            translated_dst_ip: ctx.packet.dst_ip.unwrap(),
+            translated_dst_port: ctx.packet.dst_port,
+        })
+    } else {
+        None
+    };
+
+    let snat = if ctx.packet.snat_applied {
+        Some(SnatMapping {
+            original_src_ip: ctx.packet.original_src_ip.unwrap_or_else(|| ctx.packet.src_ip.unwrap()),
+            original_src_port: ctx.packet.original_src_port,
+            translated_src_ip: ctx.packet.src_ip.unwrap(),
+            translated_src_port: ctx.packet.src_port,
+        })
+    } else {
+        None
+    };
+
+    ctx.conntrack_entry = Some(ConntrackEntry {
+        state: ConntrackState::Established,
+        nat_tuple: Some(NatTuple { dnat, snat }),
+    });
 }

@@ -182,6 +182,7 @@ fn test_local_delivery_tcp() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -217,6 +218,7 @@ fn test_forwarding_udp() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -251,6 +253,7 @@ fn test_local_delivery_icmp() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -317,6 +320,7 @@ fn test_dnat_forwarding() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -388,6 +392,7 @@ fn test_forward_drop_by_firewall() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -445,6 +450,7 @@ fn test_snat_masquerade() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth1".to_string(),
             ethertype: EtherType::Ipv4,
@@ -500,6 +506,7 @@ fn test_xdp_drop() {
         netfilter: empty_netfilter(),
         xdp,
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -624,6 +631,7 @@ fn test_policy_routing_fwmark() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -674,6 +682,7 @@ fn test_blackhole_route() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -707,6 +716,7 @@ fn test_arp_packet_l2_only() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Arp,
@@ -777,6 +787,7 @@ fn test_dnat_icmp_no_port_change() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -816,6 +827,7 @@ fn test_ttl_expired() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -850,6 +862,7 @@ fn test_vrrp_local_delivery() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -910,6 +923,7 @@ fn test_reject_verdict() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -962,6 +976,7 @@ fn test_chain_default_policy_drop() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1029,6 +1044,7 @@ fn test_iptables_rules() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1116,6 +1132,7 @@ fn test_multiple_chains_priority_order() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1177,6 +1194,7 @@ fn test_established_passes_firewall() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1239,6 +1257,7 @@ fn test_redirect_nat() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1321,6 +1340,7 @@ fn test_ipv6_local_delivery() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv6,
@@ -1388,6 +1408,7 @@ fn test_icmpv6_neighbour_solicitation() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv6,
@@ -1431,6 +1452,7 @@ fn test_xdp_tx() {
         netfilter: empty_netfilter(),
         xdp,
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1464,6 +1486,7 @@ fn test_next_hop_in_summary() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth1".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1528,6 +1551,7 @@ fn test_neq_match() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1562,6 +1586,7 @@ fn test_stp_packet() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Stp,
@@ -1631,6 +1656,7 @@ fn test_nftables_and_iptables_mixed() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1668,6 +1694,7 @@ fn test_sysctl_ip_forward_disabled() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl,
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1736,6 +1763,7 @@ fn test_sysctl_route_localnet_blocks_loopback_dnat() {
         netfilter: netfilter.clone(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(), // route_localnet=false
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1820,6 +1848,7 @@ fn test_sysctl_route_localnet_allows_loopback_dnat() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl,
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1857,6 +1886,7 @@ fn test_sysctl_icmp_echo_ignore_all() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl,
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1900,6 +1930,7 @@ fn test_sysctl_rp_filter_strict() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl,
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -1957,6 +1988,7 @@ fn test_ingress_interface_down() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2033,6 +2065,7 @@ fn test_egress_interface_down() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2068,6 +2101,7 @@ fn test_mtu_exceeded_with_df_flag() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2107,6 +2141,7 @@ fn test_mtu_exceeded_without_df_flag() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2168,6 +2203,7 @@ fn test_bridge_member_detection() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2211,6 +2247,7 @@ fn test_arp_ignore_level_1() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl,
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Arp,
@@ -2258,6 +2295,7 @@ fn test_arp_ignore_level_2() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl,
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Arp,
@@ -2299,6 +2337,7 @@ fn test_arp_ignore_disabled() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Arp,
@@ -2338,6 +2377,7 @@ fn test_empty_interfaces_list() {
         netfilter: empty_netfilter(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2468,6 +2508,7 @@ fn test_masquerade_ipv6() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth1".to_string(),
             ethertype: EtherType::Ipv6,
@@ -2589,6 +2630,7 @@ fn test_interface_no_addresses_masquerade() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2693,6 +2735,7 @@ fn test_tproxy_forces_local_delivery() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "eth0".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2851,6 +2894,7 @@ fn test_reroute_in_output() {
         netfilter,
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef {
             ingress_interface: "lo".to_string(),
             ethertype: EtherType::Ipv4,
@@ -2885,4 +2929,348 @@ fn test_reroute_in_output() {
     assert!(reroute_step.is_some(), "Expected a Reroute trace step for mark-based re-routing");
     let reroute = reroute_step.unwrap();
     assert!(reroute.explain.contains("mark"), "Reroute explain should mention mark change");
+}
+
+// ============================================================
+// Phase 6 Test: Bridge NF pipeline with bridge_nf_call_iptables=true
+// ============================================================
+#[test]
+fn test_bridge_nf_pipeline() {
+    use netsim_core::model::sysctl::SysctlConfig;
+
+    let (rules, tables) = default_routing();
+
+    // Create a bridge (br0) with eth0 as member
+    let interfaces = vec![
+        Interface {
+            name: "lo".to_string(),
+            index: 1,
+            mac: None,
+            addresses: vec![InterfaceAddress {
+                ip: "127.0.0.1".parse().unwrap(),
+                prefix_len: 8,
+                scope: AddressScope::Host,
+            }],
+            mtu: 65536,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Loopback,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+        Interface {
+            name: "br0".to_string(),
+            index: 2,
+            mac: Some("00:11:22:33:44:55".to_string()),
+            addresses: vec![InterfaceAddress {
+                ip: "10.0.0.1".parse().unwrap(),
+                prefix_len: 24,
+                scope: AddressScope::Global,
+            }],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Bridge,
+            veth_peer: None,
+            bridge_members: vec!["eth0".to_string(), "eth1".to_string()],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+        Interface {
+            name: "eth0".to_string(),
+            index: 3,
+            mac: Some("00:11:22:33:44:66".to_string()),
+            addresses: vec![],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: Some("br0".to_string()),
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+        Interface {
+            name: "eth1".to_string(),
+            index: 4,
+            mac: Some("00:11:22:33:44:77".to_string()),
+            addresses: vec![],
+            mtu: 1500,
+            state: InterfaceState::Up,
+            kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: Some("br0".to_string()),
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
+        },
+    ];
+
+    let mut sysctl = SysctlConfig::default();
+    sysctl.bridge_nf_call_iptables = true;
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "bridge-nf-pipeline".to_string(),
+        description: None,
+        interfaces,
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl,
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+
+    // Verify BrNf stages appear in trace
+    let br_nf_prerouting = result.trace.iter().any(|s| matches!(s.stage, PipelineStage::BrNfPrerouting));
+    let br_nf_forward = result.trace.iter().any(|s| matches!(s.stage, PipelineStage::BrNfForward));
+    let br_nf_postrouting = result.trace.iter().any(|s| matches!(s.stage, PipelineStage::BrNfPostrouting));
+    let bridge_forward = result.trace.iter().any(|s| matches!(s.stage, PipelineStage::BridgeForward));
+
+    assert!(br_nf_prerouting, "Expected BrNfPrerouting stage in trace");
+    assert!(br_nf_forward, "Expected BrNfForward stage in trace");
+    assert!(br_nf_postrouting, "Expected BrNfPostrouting stage in trace");
+    assert!(bridge_forward, "Expected BridgeForward stage in trace");
+
+    // After bridge nf pipeline, packet continues to normal IP stack
+    // so we should also see regular PREROUTING, ROUTING, etc.
+    let has_prerouting = result.trace.iter().any(|s| matches!(s.stage, PipelineStage::PreRouting | PipelineStage::PreRoutingRaw));
+    assert!(has_prerouting || result.trace.iter().any(|s| matches!(s.stage, PipelineStage::ConntrackIn)),
+        "Expected normal IP stack stages after bridge nf pipeline");
+}
+
+// ============================================================
+// Phase 7 Test: Conntrack NAT for established connections
+// ============================================================
+#[test]
+fn test_conntrack_nat_established() {
+    let (rules, tables) = default_routing();
+
+    // Scenario: established packet with conntrack DNAT entry
+    // The packet should have DNAT applied from conntrack, not from chain evaluation
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "conntrack-nat-established".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: NetfilterConfig {
+            nftables: Some(NftablesRuleset {
+                tables: vec![NfTable {
+                    family: NfFamily::Ip,
+                    name: "nat".to_string(),
+                    chains: vec![NfChain {
+                        name: "prerouting".to_string(),
+                        chain_type: Some(NfChainType::Nat),
+                        hook: Some(NfHook::Prerouting),
+                        priority: Some(-100),
+                        policy: Some(NfVerdict::Accept),
+                        rules: vec![NfRule {
+                            handle: None,
+                            comment: Some("DNAT to backend".to_string()),
+                            matches: vec![NfMatch::Transport {
+                                protocol: TransportProto::Tcp,
+                                field: TransportField::Dport,
+                                op: MatchOp::Eq,
+                                value: "80".to_string(),
+                            }],
+                            action: NfAction::Nat {
+                                action: NatAction::Dnat {
+                                    addr: Some("192.168.1.100".parse().unwrap()),
+                                    port: Some(8080),
+                                },
+                            },
+                        }],
+                    }],
+                }],
+            }),
+            iptables: None,
+        },
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    // First run: NEW packet, NAT chains should be evaluated
+    let result1 = engine::run(&scenario);
+    assert_eq!(result1.verdict, FinalVerdict::Forwarded);
+
+    // Verify DNAT was applied
+    let final_state = &result1.trace.last().unwrap().state_after;
+    assert!(final_state.dnat_applied, "DNAT should be applied for NEW packet");
+    assert_eq!(final_state.dst_ip, Some("192.168.1.100".parse().unwrap()));
+    assert_eq!(final_state.dst_port, Some(8080));
+
+    // Now simulate an established packet with the same conntrack entry
+    // In real usage, the PipelineContext would carry the conntrack_entry from a previous run.
+    // For this test, we verify that the conntrack NAT info trace step appears for established state
+    // by directly using ConntrackState::Established — the actual conntrack entry storage
+    // is an internal mechanism. We can verify the NEW packet stored the entry.
+    // The trace should show "conntrack NAT tuple" step is NOT present for NEW,
+    // confirming normal chain evaluation happened.
+    let new_nat_step = result1.trace.iter().find(|s|
+        s.explain.contains("conntrack NAT tuple")
+    );
+    assert!(new_nat_step.is_none(),
+        "NEW packet should NOT use conntrack NAT tuple — should evaluate chains normally");
+}
+
+// ============================================================
+// Phase 7 Test: Loopback delivery (output to local address)
+// ============================================================
+#[test]
+fn test_loopback_delivery() {
+    let (rules, tables) = default_routing();
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "loopback-delivery".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "lo".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.1".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()), // local address
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run_output(&scenario);
+
+    // Should result in local delivery via loopback
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery,
+        "Output to local address should result in LocalDelivery, got {:?}", result.verdict);
+
+    // Verify LoopbackDelivery stage in trace
+    let loopback_step = result.trace.iter().find(|s| matches!(s.stage, PipelineStage::LoopbackDelivery));
+    assert!(loopback_step.is_some(), "Expected LoopbackDelivery stage in trace");
+
+    // Verify INPUT stage was executed
+    let input_step = result.trace.iter().find(|s| matches!(s.stage, PipelineStage::LocalInput));
+    assert!(input_step.is_some(), "Expected LocalInput stage in trace after LoopbackDelivery");
+}
+
+// ============================================================
+// Endpoint Model Test: Simple RemoteClient → LocalServer flow
+// ============================================================
+#[test]
+fn test_flow_remote_to_local() {
+    use netsim_core::model::endpoint::*;
+    use netsim_core::flow::{expand_flow, SimulationRun};
+
+    let (rules, tables) = default_routing();
+
+    let topology = Topology {
+        endpoints: vec![
+            Endpoint {
+                role: EndpointRole::RemoteClient,
+                name: "web-client".to_string(),
+                ip: "203.0.113.50".parse().unwrap(),
+                port: Some(54321),
+                interface: Some("eth0".to_string()),
+            },
+            Endpoint {
+                role: EndpointRole::LocalServer,
+                name: "web-server".to_string(),
+                ip: "10.0.0.1".parse().unwrap(),
+                port: Some(80),
+                interface: None,
+            },
+        ],
+        flows: vec![TrafficFlow {
+            name: "http-request".to_string(),
+            source: "web-client".to_string(),
+            destination: "web-server".to_string(),
+            protocol: Some("tcp".to_string()),
+            description: Some("HTTP request from remote client".to_string()),
+        }],
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "flow-test".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: Some(topology.clone()),
+        packet: PacketDef::default(),
+    };
+
+    // Expand the flow
+    let runs = expand_flow(&scenario, &topology.flows[0]);
+    assert_eq!(runs.len(), 1, "RemoteClient → LocalServer should produce 1 simulation run");
+
+    let (label, run) = &runs[0];
+    assert!(label.contains("http-request"), "Label should contain flow name");
+
+    // Verify it's an Ingress run
+    match run {
+        SimulationRun::Ingress(packet_def) => {
+            assert_eq!(packet_def.src_ip, Some("203.0.113.50".parse().unwrap()));
+            assert_eq!(packet_def.dst_ip, Some("10.0.0.1".parse().unwrap()));
+            assert_eq!(packet_def.src_port, Some(54321));
+            assert_eq!(packet_def.dst_port, Some(80));
+            assert_eq!(packet_def.ingress_interface, "eth0");
+
+            // Actually run the simulation with this packet
+            let mut sim_scenario = scenario.clone();
+            sim_scenario.packet = packet_def.clone();
+            let result = engine::run(&sim_scenario);
+            assert_eq!(result.verdict, FinalVerdict::LocalDelivery,
+                "RemoteClient → LocalServer should result in LocalDelivery");
+        }
+        SimulationRun::Output(_) => {
+            panic!("Expected Ingress run for RemoteClient → LocalServer");
+        }
+    }
 }

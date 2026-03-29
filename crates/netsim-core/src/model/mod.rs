@@ -9,6 +9,7 @@ pub mod conntrack;
 pub mod scenario;
 pub mod session;
 pub mod sysctl;
+pub mod endpoint;
 
 // Re-exports
 pub use interface::*;
@@ -22,3 +23,4 @@ pub use conntrack::*;
 pub use scenario::*;
 pub use session::*;
 pub use sysctl::*;
+pub use endpoint::*;

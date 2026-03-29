@@ -141,6 +141,7 @@ fn base_scenario() -> Scenario {
         netfilter: NetfilterConfig::default(),
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
+        topology: None,
         packet: PacketDef::default(), // placeholder, will be overridden
     }
 }

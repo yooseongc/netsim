@@ -97,6 +97,14 @@ pub enum PipelineStage {
     Output,
     /// 라우팅 재평가 (mark/DNAT 변경으로 인한 re-routing)
     Reroute,
+    /// Bridge NF PREROUTING (br_nf_call_iptables)
+    BrNfPrerouting,
+    /// Bridge NF FORWARD (br_nf_call_iptables)
+    BrNfForward,
+    /// Bridge NF POSTROUTING (br_nf_call_iptables)
+    BrNfPostrouting,
+    /// Loopback delivery (output to local address)
+    LoopbackDelivery,
 }
 
 impl std::fmt::Display for PipelineStage {
@@ -120,6 +128,10 @@ impl std::fmt::Display for PipelineStage {
             PipelineStage::BridgeForward => write!(f, "BRIDGE_FORWARD"),
             PipelineStage::Output => write!(f, "OUTPUT"),
             PipelineStage::Reroute => write!(f, "REROUTE"),
+            PipelineStage::BrNfPrerouting => write!(f, "BR_NF_PREROUTING"),
+            PipelineStage::BrNfForward => write!(f, "BR_NF_FORWARD"),
+            PipelineStage::BrNfPostrouting => write!(f, "BR_NF_POSTROUTING"),
+            PipelineStage::LoopbackDelivery => write!(f, "LOOPBACK_DELIVERY"),
         }
     }
 }

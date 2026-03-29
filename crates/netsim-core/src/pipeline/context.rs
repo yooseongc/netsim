@@ -1,3 +1,4 @@
+use crate::model::conntrack::ConntrackEntry;
 use crate::model::packet::PacketState;
 use crate::model::scenario::Scenario;
 use crate::pipeline::StageResult;
@@ -33,6 +34,8 @@ pub struct PipelineContext<'a> {
     pub routing_result: Option<RoutingOutcome>,
     /// Flag: routing needs to be re-evaluated (DNAT changed dst, mark changed for PBR)
     pub needs_reroute: bool,
+    /// Conntrack entry for the current connection (NAT tuple storage for established flows)
+    pub conntrack_entry: Option<ConntrackEntry>,
 }
 
 /// Pipeline stage outcome
@@ -56,6 +59,7 @@ impl<'a> PipelineContext<'a> {
             seq: 0,
             routing_result: None,
             needs_reroute: false,
+            conntrack_entry: None,
         }
     }
 

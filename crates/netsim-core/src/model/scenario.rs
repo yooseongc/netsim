@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::endpoint::Topology;
 use super::interface::Interface;
 use super::netfilter::NetfilterConfig;
 use super::packet::PacketDef;
@@ -29,6 +30,9 @@ pub struct Scenario {
     #[serde(default)]
     pub sysctl: SysctlConfig,
     pub packet: PacketDef,
+    /// 시뮬레이션 토폴로지 (엔드포인트 및 트래픽 흐름 정의)
+    #[serde(default)]
+    pub topology: Option<Topology>,
 }
 
 fn default_version() -> String {

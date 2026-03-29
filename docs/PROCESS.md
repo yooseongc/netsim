@@ -44,6 +44,7 @@
   - R3: PipelineStage 라벨 수정 (RpFilter, L2Bypass), compute_state_changes L2 필드 추가
 - [x] 총 74개 테스트 통과 (matcher 26 + 통합 42 + 세션 6)
 - [x] docs/NETWORK_STACK.md 작성 (전체 파이프라인 다이어그램, 단계별 상세, sysctl, 인터페이스, 세션)
+- [x] 5단계: 파서 구현 (5개 파서 + 통합 API + 46개 테스트)
 
 ---
 
@@ -55,7 +56,7 @@
 | 2단계 | 프로젝트 초기화 (Rust workspace + Frontend + Docker) | 완료 |
 | 3단계 | 코어 모델 구현 (netsim-core IR) | 완료 |
 | 4단계 | 시뮬레이션 엔진 구현 | 완료 |
-| 5단계 | 파서 구현 (netsim-parser) | 대기 |
+| 5단계 | 파서 구현 (netsim-parser) | 완료 |
 | 6단계 | 웹 서버 구현 (netsim-server) | 대기 |
 | 7단계 | 프론트엔드 구현 | 대기 |
 | 8단계 | 통합 및 배포 | 대기 |

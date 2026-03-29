@@ -20,8 +20,8 @@ use std::net::IpAddr;
 
 use uuid::Uuid;
 
-use crate::model::interface::Interface;
-use crate::model::packet::{IpProtocol, PacketState};
+use crate::model::interface::{find_interface, Interface};
+use crate::model::packet::{EtherType, IpProtocol, PacketState};
 use crate::model::scenario::Scenario;
 use crate::model::sysctl::{RpFilterMode, SysctlConfig};
 use crate::pipeline::{self, StageResult};
@@ -37,6 +37,139 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
     let mut all_matched_rules: Vec<MatchedRuleRef> = Vec::new();
     let mut seq: u32 = 0;
     let sysctl = &scenario.sysctl;
+
+    // --- Stage 0: Interface validation ---
+    {
+        // (a) Interface existence check
+        let ingress_iface = find_interface(&scenario.interfaces, &state.ingress_if);
+        match ingress_iface {
+            None => {
+                seq += 1;
+                trace.push(TraceStep {
+                    seq,
+                    stage: PipelineStage::InterfaceCheck,
+                    description: "ingress interface check".to_string(),
+                    state_before: state.clone(),
+                    state_after: state.clone(),
+                    state_changes: vec![],
+                    matched_rules: vec![],
+                    decision: StageDecision::Drop {
+                        reason: "Unknown ingress interface".to_string(),
+                    },
+                    explain: format!(
+                        "Ingress interface '{}' does not exist in scenario interfaces",
+                        state.ingress_if
+                    ),
+                });
+                return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+            }
+            Some(iface) => {
+                // (b) Interface state check
+                if !iface.is_up() {
+                    seq += 1;
+                    trace.push(TraceStep {
+                        seq,
+                        stage: PipelineStage::InterfaceCheck,
+                        description: "ingress interface state check".to_string(),
+                        state_before: state.clone(),
+                        state_after: state.clone(),
+                        state_changes: vec![],
+                        matched_rules: vec![],
+                        decision: StageDecision::Drop {
+                            reason: "Ingress interface is down".to_string(),
+                        },
+                        explain: format!(
+                            "Ingress interface '{}' is in DOWN state — packets cannot be received",
+                            state.ingress_if
+                        ),
+                    });
+                    return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+                }
+
+                // (c) Bridge member check
+                if let Some(master) = &iface.master {
+                    seq += 1;
+                    trace.push(TraceStep {
+                        seq,
+                        stage: PipelineStage::InterfaceCheck,
+                        description: "bridge member detection".to_string(),
+                        state_before: state.clone(),
+                        state_after: state.clone(),
+                        state_changes: vec![],
+                        matched_rules: vec![],
+                        decision: StageDecision::Continue,
+                        explain: format!(
+                            "Interface '{}' is a member of bridge '{}'. \
+                             In Linux, packets arriving on a bridge member go through bridge processing first.",
+                            state.ingress_if, master
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    // --- ARP processing ---
+    if matches!(state.ethertype, EtherType::Arp) {
+        let arp_conf = sysctl.get_interface_conf(&state.ingress_if);
+        if arp_conf.arp_ignore >= 1 {
+            // arp_ignore >= 1: target IP must be configured on the ingress interface
+            let target_ip = scenario.packet.arp.as_ref().and_then(|a| a.target_ip);
+            let mut should_drop = false;
+            let mut explain = String::new();
+
+            if let Some(tip) = target_ip {
+                let iface_has_ip = find_interface(&scenario.interfaces, &state.ingress_if)
+                    .map(|iface| iface.addresses.iter().any(|a| a.ip == tip))
+                    .unwrap_or(false);
+
+                if !iface_has_ip {
+                    should_drop = true;
+                    explain = format!(
+                        "arp_ignore={}: ARP target IP {} is not configured on ingress interface '{}' — ARP reply suppressed",
+                        arp_conf.arp_ignore, tip, state.ingress_if
+                    );
+                } else if arp_conf.arp_ignore >= 2 {
+                    // arp_ignore >= 2: additionally check sender IP is in same subnet
+                    let sender_ip = scenario.packet.arp.as_ref().and_then(|a| a.sender_ip);
+                    if let Some(sip) = sender_ip {
+                        let same_subnet = find_interface(&scenario.interfaces, &state.ingress_if)
+                            .map(|iface| {
+                                iface.addresses.iter().any(|a| {
+                                    is_same_subnet(&a.ip, &sip, a.prefix_len)
+                                })
+                            })
+                            .unwrap_or(false);
+                        if !same_subnet {
+                            should_drop = true;
+                            explain = format!(
+                                "arp_ignore={}: ARP sender IP {} is not in the same subnet as any address on ingress interface '{}' — ARP reply suppressed",
+                                arp_conf.arp_ignore, sip, state.ingress_if
+                            );
+                        }
+                    }
+                }
+            }
+
+            if should_drop {
+                seq += 1;
+                trace.push(TraceStep {
+                    seq,
+                    stage: PipelineStage::ArpProcess,
+                    description: "arp_ignore check".to_string(),
+                    state_before: state.clone(),
+                    state_after: state.clone(),
+                    state_changes: vec![],
+                    matched_rules: vec![],
+                    decision: StageDecision::Drop {
+                        reason: format!("ARP reply suppressed by arp_ignore={}", arp_conf.arp_ignore),
+                    },
+                    explain,
+                });
+                return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+            }
+        }
+    }
 
     // --- Stage 1: XDP ---
     seq += 1;
@@ -206,6 +339,32 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             finalize(scenario, trace, all_matched_rules, FinalVerdict::LocalDelivery, &state)
         }
         StageDecision::ForwardTo { .. } => {
+            // --- (d) Egress interface state check ---
+            if let Some(ref egress_name) = state.egress_if {
+                if let Some(egress_iface) = find_interface(&scenario.interfaces, egress_name) {
+                    if !egress_iface.is_up() {
+                        seq += 1;
+                        trace.push(TraceStep {
+                            seq,
+                            stage: PipelineStage::InterfaceCheck,
+                            description: "egress interface state check".to_string(),
+                            state_before: state.clone(),
+                            state_after: state.clone(),
+                            state_changes: vec![],
+                            matched_rules: vec![],
+                            decision: StageDecision::Drop {
+                                reason: "Egress interface is down".to_string(),
+                            },
+                            explain: format!(
+                                "Egress interface '{}' is in DOWN state — packet cannot be forwarded",
+                                egress_name
+                            ),
+                        });
+                        return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+                    }
+                }
+            }
+
             // --- sysctl: ip_forward check ---
             if !sysctl.is_forwarding_enabled(&state.ingress_if) {
                 seq += 1;
@@ -246,6 +405,54 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             all_matched_rules.extend(result.matched_rules.clone());
             if let Some(verdict) = terminal_verdict(&result.decision) {
                 return finalize(scenario, trace, all_matched_rules, verdict, &state);
+            }
+
+            // --- (e) MTU check ---
+            if let Some(ref egress_name) = state.egress_if {
+                if let Some(egress_iface) = find_interface(&scenario.interfaces, egress_name) {
+                    let mtu = egress_iface.mtu;
+                    if let Some(pkt_len) = state.packet_length {
+                        if pkt_len > mtu {
+                            seq += 1;
+                            if state.df_flag {
+                                trace.push(TraceStep {
+                                    seq,
+                                    stage: PipelineStage::MtuCheck,
+                                    description: "MTU exceeded with DF flag".to_string(),
+                                    state_before: state.clone(),
+                                    state_after: state.clone(),
+                                    state_changes: vec![],
+                                    matched_rules: vec![],
+                                    decision: StageDecision::Drop {
+                                        reason: "Packet exceeds MTU and DF flag is set (ICMP Fragmentation Needed would be sent)".to_string(),
+                                    },
+                                    explain: format!(
+                                        "Packet length {} exceeds egress interface '{}' MTU {} and DF (Don't Fragment) flag is set. \
+                                         Kernel would send ICMP Fragmentation Needed (Type 3, Code 4) back to sender.",
+                                        pkt_len, egress_name, mtu
+                                    ),
+                                });
+                                return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+                            } else {
+                                trace.push(TraceStep {
+                                    seq,
+                                    stage: PipelineStage::MtuCheck,
+                                    description: "MTU exceeded, fragmentation needed".to_string(),
+                                    state_before: state.clone(),
+                                    state_after: state.clone(),
+                                    state_changes: vec![],
+                                    matched_rules: vec![],
+                                    decision: StageDecision::Continue,
+                                    explain: format!(
+                                        "Packet length {} exceeds egress interface '{}' MTU {}. \
+                                         Packet would be fragmented before transmission.",
+                                        pkt_len, egress_name, mtu
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
             }
 
             // --- Stage 8: conntrack confirm ---
@@ -358,6 +565,39 @@ fn is_icmp_echo_request(state: &PacketState) -> bool {
         IpProtocol::Icmp => state.icmp_type == Some(8),
         IpProtocol::Icmpv6 => state.icmp_type == Some(128),
         _ => false,
+    }
+}
+
+/// 두 IP가 같은 서브넷에 있는지 확인
+fn is_same_subnet(a: &IpAddr, b: &IpAddr, prefix_len: u8) -> bool {
+    match (a, b) {
+        (IpAddr::V4(a4), IpAddr::V4(b4)) => {
+            if prefix_len > 32 {
+                return false;
+            }
+            let mask = if prefix_len == 0 {
+                0u32
+            } else {
+                !0u32 << (32 - prefix_len)
+            };
+            let a_bits = u32::from(*a4);
+            let b_bits = u32::from(*b4);
+            (a_bits & mask) == (b_bits & mask)
+        }
+        (IpAddr::V6(a6), IpAddr::V6(b6)) => {
+            if prefix_len > 128 {
+                return false;
+            }
+            let a_bits = u128::from(*a6);
+            let b_bits = u128::from(*b6);
+            let mask = if prefix_len == 0 {
+                0u128
+            } else {
+                !0u128 << (128 - prefix_len)
+            };
+            (a_bits & mask) == (b_bits & mask)
+        }
+        _ => false, // different families
     }
 }
 

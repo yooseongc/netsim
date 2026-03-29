@@ -414,6 +414,7 @@ impl Default for PacketDef {
             icmp_code: None,
             arp: None,
             packet_length: None,
+            df_flag: false,
             dscp: None,
             ttl: None,
             initial_mark: 0,

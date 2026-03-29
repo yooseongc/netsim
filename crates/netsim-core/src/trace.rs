@@ -67,6 +67,10 @@ pub struct TraceStep {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PipelineStage {
+    /// 인터페이스 검증 (존재, 상태, 브릿지 멤버 등)
+    InterfaceCheck,
+    /// ARP 처리 (arp_ignore 등)
+    ArpProcess,
     Xdp,
     TcIngress,
     ConntrackIn,
@@ -75,12 +79,16 @@ pub enum PipelineStage {
     LocalInput,
     Forward,
     PostRouting,
+    /// MTU 검사
+    MtuCheck,
     ConntrackConfirm,
 }
 
 impl std::fmt::Display for PipelineStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PipelineStage::InterfaceCheck => write!(f, "INTERFACE_CHECK"),
+            PipelineStage::ArpProcess => write!(f, "ARP_PROCESS"),
             PipelineStage::Xdp => write!(f, "XDP"),
             PipelineStage::TcIngress => write!(f, "TC_INGRESS"),
             PipelineStage::ConntrackIn => write!(f, "CONNTRACK_IN"),
@@ -89,6 +97,7 @@ impl std::fmt::Display for PipelineStage {
             PipelineStage::LocalInput => write!(f, "INPUT"),
             PipelineStage::Forward => write!(f, "FORWARD"),
             PipelineStage::PostRouting => write!(f, "POSTROUTING"),
+            PipelineStage::MtuCheck => write!(f, "MTU_CHECK"),
             PipelineStage::ConntrackConfirm => write!(f, "CONNTRACK_CONFIRM"),
         }
     }

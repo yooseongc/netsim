@@ -49,6 +49,9 @@ pub struct PacketDef {
     // --- Common fields ---
     #[serde(default)]
     pub packet_length: Option<u32>,
+    /// Don't Fragment flag (IPv4)
+    #[serde(default)]
+    pub df_flag: bool,
     #[serde(default)]
     pub dscp: Option<u8>,
     #[serde(default)]
@@ -100,6 +103,10 @@ pub struct PacketState {
     pub tcp_flags: Option<TcpFlags>,
     /// ARP operation (for L2 ARP packets)
     pub arp_op: Option<u16>,
+    /// Packet length (bytes)
+    pub packet_length: Option<u32>,
+    /// Don't Fragment flag
+    pub df_flag: bool,
     pub dnat_applied: bool,
     pub snat_applied: bool,
     pub original_dst_ip: Option<IpAddr>,
@@ -161,6 +168,8 @@ impl PacketState {
             icmp_code: def.icmp_code,
             tcp_flags: def.tcp_flags.clone(),
             arp_op: def.arp.as_ref().map(|a| a.operation),
+            packet_length: def.packet_length,
+            df_flag: def.df_flag,
             dnat_applied: false,
             snat_applied: false,
             original_dst_ip: None,

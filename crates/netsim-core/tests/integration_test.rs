@@ -32,6 +32,12 @@ fn default_interfaces() -> Vec<Interface> {
             mtu: 65536,
             state: InterfaceState::Up,
             kind: InterfaceKind::Loopback,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
         },
         Interface {
             name: "eth0".to_string(),
@@ -45,6 +51,12 @@ fn default_interfaces() -> Vec<Interface> {
             mtu: 1500,
             state: InterfaceState::Up,
             kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
         },
         Interface {
             name: "eth1".to_string(),
@@ -58,6 +70,12 @@ fn default_interfaces() -> Vec<Interface> {
             mtu: 1500,
             state: InterfaceState::Up,
             kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
         },
     ]
 }
@@ -1269,6 +1287,12 @@ fn test_ipv6_local_delivery() {
             mtu: 1500,
             state: InterfaceState::Up,
             kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
         },
     ];
     let rules = vec![IpRule {
@@ -1331,6 +1355,12 @@ fn test_icmpv6_neighbour_solicitation() {
         mtu: 1500,
         state: InterfaceState::Up,
         kind: InterfaceKind::Physical,
+        veth_peer: None,
+        bridge_members: vec![],
+        master: None,
+        vlan_parent: None,
+        vlan_id: None,
+        bond_members: vec![],
     }];
     let rules = vec![IpRule {
         priority: 0,
@@ -1909,6 +1939,7 @@ fn default_packet_def() -> PacketDef {
         icmp_code: None,
         arp: None,
         packet_length: None,
+        df_flag: false,
         dscp: None,
         ttl: None,
         initial_mark: 0,

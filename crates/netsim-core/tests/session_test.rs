@@ -27,6 +27,12 @@ fn default_interfaces() -> Vec<Interface> {
             mtu: 1500,
             state: InterfaceState::Up,
             kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
         },
         Interface {
             name: "eth1".to_string(),
@@ -40,6 +46,12 @@ fn default_interfaces() -> Vec<Interface> {
             mtu: 1500,
             state: InterfaceState::Up,
             kind: InterfaceKind::Physical,
+            veth_peer: None,
+            bridge_members: vec![],
+            master: None,
+            vlan_parent: None,
+            vlan_id: None,
+            bond_members: vec![],
         },
     ]
 }

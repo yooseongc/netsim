@@ -36,6 +36,18 @@ pub struct SysctlConfig {
     /// 인터페이스별 설정 (key = interface name, "all"/"default" 가능)
     #[serde(default)]
     pub interface_conf: std::collections::HashMap<String, InterfaceSysctl>,
+
+    /// net.bridge.bridge-nf-call-iptables — 브릿지 패킷에 iptables 적용
+    #[serde(default)]
+    pub bridge_nf_call_iptables: bool,
+
+    /// net.bridge.bridge-nf-call-ip6tables — 브릿지 IPv6 패킷에 ip6tables 적용
+    #[serde(default)]
+    pub bridge_nf_call_ip6tables: bool,
+
+    /// net.bridge.bridge-nf-call-arptables — 브릿지 ARP 패킷에 arptables 적용
+    #[serde(default)]
+    pub bridge_nf_call_arptables: bool,
 }
 
 impl Default for SysctlConfig {
@@ -44,6 +56,9 @@ impl Default for SysctlConfig {
             ipv4: Ipv4Sysctl::default(),
             ipv6: Ipv6Sysctl::default(),
             interface_conf: std::collections::HashMap::new(),
+            bridge_nf_call_iptables: false,
+            bridge_nf_call_ip6tables: false,
+            bridge_nf_call_arptables: false,
         }
     }
 }
@@ -177,6 +192,30 @@ pub struct InterfaceSysctl {
     /// net.ipv4.conf.{iface}.proxy_arp — Proxy ARP 활성화
     #[serde(default)]
     pub proxy_arp: bool,
+
+    /// net.ipv4.conf.{iface}.proxy_arp_pvlan — Private VLAN proxy ARP
+    #[serde(default)]
+    pub proxy_arp_pvlan: bool,
+
+    /// net.ipv4.conf.{iface}.arp_ignore — ARP 응답 제어
+    /// 0: 어떤 로컬 IP든 응답 (기본)
+    /// 1: 요청 대상 IP가 수신 인터페이스에 설정된 경우만 응답
+    /// 2: 요청 대상 IP가 수신 인터페이스에 설정되고 sender가 같은 서브넷인 경우만 응답
+    /// 3-8: 더 엄격한 제한
+    #[serde(default)]
+    pub arp_ignore: u8,
+
+    /// net.ipv4.conf.{iface}.arp_announce — ARP 요청 시 소스 IP 선택
+    /// 0: 아무 로컬 주소 사용 (기본)
+    /// 1: 대상과 같은 서브넷 주소 선호
+    /// 2: 반드시 출력 인터페이스의 주소만 사용 (L3 로드밸런서에서 사용)
+    #[serde(default)]
+    pub arp_announce: u8,
+
+    /// net.ipv4.conf.{iface}.arp_filter — ARP 필터링
+    /// 1: ARP 요청이 도착한 인터페이스로 라우팅 가능한 경우만 응답
+    #[serde(default)]
+    pub arp_filter: bool,
 }
 
 impl Default for InterfaceSysctl {
@@ -184,13 +223,15 @@ impl Default for InterfaceSysctl {
         Self {
             forwarding: None,
             route_localnet: false,
-            // 시뮬레이션 기본값: Off (실제 Linux 기본값은 Strict이지만,
-            // 시뮬레이션에서는 rp_filter가 의도적 설정이 아닌 한 방해하지 않도록)
             rp_filter: RpFilterMode::Off,
             accept_local: false,
             send_redirects: true,
             log_martians: false,
             proxy_arp: false,
+            proxy_arp_pvlan: false,
+            arp_ignore: 0,
+            arp_announce: 0,
+            arp_filter: false,
         }
     }
 }

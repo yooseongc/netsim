@@ -36,6 +36,13 @@
 - [x] sysctl 커널 파라미터 모델 (ip_forward, route_localnet, rp_filter, icmp_echo_ignore 등)
 - [x] 엔진에 sysctl 통합 (ip_forward, route_localnet, rp_filter, icmp_echo_ignore_all)
 - [x] sysctl 테스트 5개 (ip_forward off, route_localnet on/off, icmp_echo_ignore, rp_filter strict)
+- [x] 인터페이스 모델 확장 (veth, bridge, VLAN, bond, MTU, df_flag, state 검증)
+- [x] ARP sysctl (arp_ignore/announce/filter, proxy_arp, bridge-nf-call)
+- [x] 테스트 강화 3회전 실시:
+  - R1: MTU trace gap 수정, +11 테스트 (interface down, MTU DF, bridge, ARP, IPv6 masq)
+  - R2: ARP→XDP 순서 수정, vlan_id/mac PacketState 추가, egress 존재 검증
+  - R3: PipelineStage 라벨 수정 (RpFilter, L2Bypass), compute_state_changes L2 필드 추가
+- [x] 총 74개 테스트 통과 (matcher 26 + 통합 42 + 세션 6)
 
 ---
 

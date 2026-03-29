@@ -195,7 +195,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         seq += 1;
         trace.push(TraceStep {
             seq,
-            stage: PipelineStage::RoutingDecision,
+            stage: PipelineStage::L2Bypass,
             description: "L2 bypass".to_string(),
             state_before: state.clone(),
             state_after: state.clone(),
@@ -217,7 +217,7 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         seq += 1;
         trace.push(TraceStep {
             seq,
-            stage: PipelineStage::TcIngress,
+            stage: PipelineStage::RpFilter,
             description: "rp_filter check".to_string(),
             state_before: state.clone(),
             state_after: state.clone(),

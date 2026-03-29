@@ -71,7 +71,11 @@ pub enum PipelineStage {
     InterfaceCheck,
     /// ARP 처리 (arp_ignore 등)
     ArpProcess,
+    /// L2-only 패킷 바이패스 (ARP, STP 등이 netfilter/routing 건너뜀)
+    L2Bypass,
     Xdp,
+    /// Reverse Path Filter (sysctl rp_filter)
+    RpFilter,
     TcIngress,
     ConntrackIn,
     PreRouting,
@@ -89,7 +93,9 @@ impl std::fmt::Display for PipelineStage {
         match self {
             PipelineStage::InterfaceCheck => write!(f, "INTERFACE_CHECK"),
             PipelineStage::ArpProcess => write!(f, "ARP_PROCESS"),
+            PipelineStage::L2Bypass => write!(f, "L2_BYPASS"),
             PipelineStage::Xdp => write!(f, "XDP"),
+            PipelineStage::RpFilter => write!(f, "RP_FILTER"),
             PipelineStage::TcIngress => write!(f, "TC_INGRESS"),
             PipelineStage::ConntrackIn => write!(f, "CONNTRACK_IN"),
             PipelineStage::PreRouting => write!(f, "PREROUTING"),
@@ -146,6 +152,30 @@ pub struct StateChange {
 pub fn compute_state_changes(before: &PacketState, after: &PacketState) -> Vec<StateChange> {
     let mut changes = Vec::new();
 
+    // L2 fields
+    if before.vlan_id != after.vlan_id {
+        changes.push(StateChange {
+            field: "vlan_id".to_string(),
+            from: format!("{:?}", before.vlan_id),
+            to: format!("{:?}", after.vlan_id),
+        });
+    }
+    if before.src_mac != after.src_mac {
+        changes.push(StateChange {
+            field: "src_mac".to_string(),
+            from: format!("{:?}", before.src_mac),
+            to: format!("{:?}", after.src_mac),
+        });
+    }
+    if before.dst_mac != after.dst_mac {
+        changes.push(StateChange {
+            field: "dst_mac".to_string(),
+            from: format!("{:?}", before.dst_mac),
+            to: format!("{:?}", after.dst_mac),
+        });
+    }
+
+    // L3 fields
     if before.src_ip != after.src_ip {
         changes.push(StateChange {
             field: "src_ip".to_string(),

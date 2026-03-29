@@ -17,21 +17,22 @@ pub fn execute(
     state: &mut PacketState,
     interfaces: &[Interface],
 ) -> StageResult {
-    // TTL 감소 (IP 패킷만)
+    // TTL 감소 (IP 패킷만) — Linux 커널과 동일하게 감소 후 확인
     if !state.ethertype.is_l2_only() {
-        if state.ttl <= 1 {
+        let original_ttl = state.ttl;
+        state.ttl = state.ttl.saturating_sub(1);
+        if state.ttl == 0 {
             return StageResult {
                 decision: StageDecision::Drop {
                     reason: "TTL expired in transit".to_string(),
                 },
                 matched_rules: Vec::new(),
                 explain: format!(
-                    "TTL={} reached 0 after decrement — packet dropped (ICMP Time Exceeded would be sent)",
-                    state.ttl
+                    "TTL decremented from {} to 0 — packet dropped (ICMP Time Exceeded would be sent to sender)",
+                    original_ttl
                 ),
             };
         }
-        state.ttl -= 1;
     }
 
     evaluate_netfilter_hook(config, &NfHook::Forward, state, interfaces)

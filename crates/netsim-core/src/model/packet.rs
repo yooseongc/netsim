@@ -137,7 +137,7 @@ impl PacketState {
 
     /// 프로토콜이 포트를 가지는지 여부
     pub fn has_ports(&self) -> bool {
-        matches!(self.protocol, IpProtocol::Tcp | IpProtocol::Udp)
+        self.protocol.has_ports()
     }
 }
 

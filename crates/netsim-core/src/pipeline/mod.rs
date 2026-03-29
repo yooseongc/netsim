@@ -196,7 +196,7 @@ pub fn evaluate_chain(
                     };
                 }
             },
-            NfAction::Nat(nat_action) => {
+            NfAction::Nat { action: nat_action } => {
                 apply_nat(nat_action, state, interfaces);
                 // NAT rules implicitly accept in their chain
                 return ChainEvalResult {
@@ -309,16 +309,15 @@ pub fn apply_nat(
             state.snat_applied = true;
         }
         NatAction::Masquerade { port } => {
-            // Use egress interface's first IP address as SNAT addr
+            // Use egress interface's IP address matching packet's address family
             if !state.snat_applied {
                 state.original_src_ip = state.src_ip;
                 state.original_src_port = state.src_port;
             }
             if let Some(egress_name) = &state.egress_if {
-                if let Some(iface) = interfaces.iter().find(|i| &i.name == egress_name) {
-                    if let Some(first_addr) = iface.addresses.first() {
-                        state.src_ip = Some(first_addr.ip);
-                    }
+                let masq_ip = find_interface_ip_matching_family(interfaces, egress_name, state.src_ip);
+                if let Some(ip) = masq_ip {
+                    state.src_ip = Some(ip);
                 }
             }
             if state.has_ports() {
@@ -329,13 +328,13 @@ pub fn apply_nat(
             state.snat_applied = true;
         }
         NatAction::Redirect { port } => {
-            // REDIRECT changes dst to local address (127.0.0.1 for IPv4)
+            // REDIRECT changes dst to local address on ingress interface
             if !state.dnat_applied {
                 state.original_dst_ip = state.dst_ip;
                 state.original_dst_port = state.dst_port;
             }
-            // Use ingress interface's first IP or localhost
-            let local_ip = find_interface_ip(interfaces, &state.ingress_if);
+            // Use ingress interface's IP matching packet's address family
+            let local_ip = find_interface_ip_matching_family(interfaces, &state.ingress_if, state.dst_ip);
             if let Some(ip) = local_ip {
                 state.dst_ip = Some(ip);
             }
@@ -366,15 +365,34 @@ pub fn apply_nat(
 }
 
 /// 인터페이스의 첫 번째 IP 주소를 찾는다
-fn find_interface_ip(
+/// 인터페이스에서 패킷의 주소 패밀리(IPv4/IPv6)에 맞는 IP 주소를 찾는다.
+/// 매칭 패밀리가 없으면 첫 번째 주소를 반환한다.
+fn find_interface_ip_matching_family(
     interfaces: &[crate::model::interface::Interface],
     if_name: &str,
+    packet_ip: Option<std::net::IpAddr>,
 ) -> Option<std::net::IpAddr> {
-    interfaces
-        .iter()
-        .find(|i| i.name == if_name)
-        .and_then(|i| i.addresses.first())
-        .map(|a| a.ip)
+    let iface = interfaces.iter().find(|i| i.name == if_name)?;
+    if iface.addresses.is_empty() {
+        return None;
+    }
+
+    // 패킷 IP의 주소 패밀리에 맞는 주소 우선 탐색
+    if let Some(pkt_ip) = packet_ip {
+        let matching = iface.addresses.iter().find(|a| {
+            matches!(
+                (&a.ip, &pkt_ip),
+                (std::net::IpAddr::V4(_), std::net::IpAddr::V4(_))
+                    | (std::net::IpAddr::V6(_), std::net::IpAddr::V6(_))
+            )
+        });
+        if let Some(addr) = matching {
+            return Some(addr.ip);
+        }
+    }
+
+    // fallback: 첫 번째 주소
+    Some(iface.addresses.first()?.ip)
 }
 
 /// 규칙 요약 문자열 생성
@@ -386,7 +404,7 @@ fn format_rule_summary(rule: &NfRule) -> String {
     };
     let action_str = match &rule.action {
         NfAction::Verdict { verdict } => format!("{:?}", verdict),
-        NfAction::Nat(nat) => format!("NAT({:?})", nat),
+        NfAction::Nat { action: nat } => format!("NAT({:?})", nat),
         NfAction::SetMark { value, mask } => {
             if let Some(m) = mask {
                 format!("MARK(0x{:x}/0x{:x})", value, m)

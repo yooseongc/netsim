@@ -274,10 +274,10 @@ fn test_dnat_forwarding() {
                                 value: "80".to_string(),
                             },
                         ],
-                        action: NfAction::Nat(NatAction::Dnat {
+                        action: NfAction::Nat { action: NatAction::Dnat {
                             addr: Some("192.168.1.100".parse().unwrap()),
                             port: Some(8080),
-                        }),
+                        }},
                     }],
                 }],
             }],
@@ -403,7 +403,7 @@ fn test_snat_masquerade() {
                         handle: None,
                         comment: None,
                         matches: vec![NfMatch::Oif { name: "eth0".to_string() }],
-                        action: NfAction::Nat(NatAction::Masquerade { port: None }),
+                        action: NfAction::Nat { action: NatAction::Masquerade { port: None }},
                     }],
                 }],
             }],
@@ -727,10 +727,10 @@ fn test_dnat_icmp_no_port_change() {
                             op: MatchOp::Eq,
                             value: "10.0.0.1".to_string(),
                         }],
-                        action: NfAction::Nat(NatAction::Dnat {
+                        action: NfAction::Nat { action: NatAction::Dnat {
                             addr: Some("192.168.1.100".parse().unwrap()),
                             port: Some(8080), // ICMP에는 적용되지 않아야 함
-                        }),
+                        }},
                     }],
                 }],
             }],
@@ -1184,7 +1184,7 @@ fn test_redirect_nat() {
                             op: MatchOp::Eq,
                             value: "8080".to_string(),
                         }],
-                        action: NfAction::Nat(NatAction::Redirect { port: Some(80) }),
+                        action: NfAction::Nat { action: NatAction::Redirect { port: Some(80) }},
                     }],
                 }],
             }],

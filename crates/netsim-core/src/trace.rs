@@ -200,6 +200,48 @@ pub fn compute_state_changes(before: &PacketState, after: &PacketState) -> Vec<S
             to: after.ttl.to_string(),
         });
     }
+    if before.dscp != after.dscp {
+        changes.push(StateChange {
+            field: "dscp".to_string(),
+            from: before.dscp.to_string(),
+            to: after.dscp.to_string(),
+        });
+    }
+    if before.dnat_applied != after.dnat_applied {
+        changes.push(StateChange {
+            field: "dnat_applied".to_string(),
+            from: before.dnat_applied.to_string(),
+            to: after.dnat_applied.to_string(),
+        });
+    }
+    if before.snat_applied != after.snat_applied {
+        changes.push(StateChange {
+            field: "snat_applied".to_string(),
+            from: before.snat_applied.to_string(),
+            to: after.snat_applied.to_string(),
+        });
+    }
+    if before.protocol != after.protocol {
+        changes.push(StateChange {
+            field: "protocol".to_string(),
+            from: before.protocol.to_string(),
+            to: after.protocol.to_string(),
+        });
+    }
+    if before.icmp_type != after.icmp_type {
+        changes.push(StateChange {
+            field: "icmp_type".to_string(),
+            from: format!("{:?}", before.icmp_type),
+            to: format!("{:?}", after.icmp_type),
+        });
+    }
+    if before.icmp_code != after.icmp_code {
+        changes.push(StateChange {
+            field: "icmp_code".to_string(),
+            from: format!("{:?}", before.icmp_code),
+            to: format!("{:?}", after.icmp_code),
+        });
+    }
 
     changes
 }

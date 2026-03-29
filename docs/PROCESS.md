@@ -25,6 +25,13 @@
 - [x] 파이프라인 전 단계 구현 (xdp, tc, prerouting, routing, input, forward, postrouting)
 - [x] engine.rs 시뮬레이션 오케스트레이터 구현
 - [x] 통합 테스트 13개 시나리오 (TCP/UDP/ICMP/ARP/VRRP, DNAT, SNAT, XDP, 정책라우팅, TTL, blackhole)
+- [x] 1차 버그 수정 (메모리 누수, Reject/Drop 구분, XDP TX, next_hop)
+- [x] 통합 테스트 26개로 확장 (+Reject, chain policy, iptables, IPv6, ICMPv6, 혼합 규칙)
+- [x] 2차 버그 수정 (SCTP has_ports, Masquerade IPv4/6 패밀리, serde 중첩 tag, TTL 순서)
+- [x] compute_state_changes NAT/프로토콜 필드 추적 보강
+- [x] 세션 모델 구현 (TCP handshake, ICMP echo, UDP exchange, 커스텀)
+- [x] 세션 엔진 구현 (NAT 매핑 전파, 방화벽 실패 감지)
+- [x] 세션 테스트 6개 (TCP handshake, ICMP ping, DNAT+TCP, 방화벽 차단, UDP DNS, full TCP)
 
 ---
 

@@ -198,7 +198,7 @@ pub enum CtKey {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NfAction {
     Verdict { verdict: NfVerdict },
-    Nat(NatAction),
+    Nat { action: NatAction },
     SetMark { value: u32, #[serde(default)] mask: Option<u32> },
     Log { #[serde(default)] prefix: Option<String>, #[serde(default)] level: Option<u8> },
     Counter,

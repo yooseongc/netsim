@@ -7,6 +7,7 @@ pub mod nat;
 pub mod packet;
 pub mod conntrack;
 pub mod scenario;
+pub mod session;
 
 // Re-exports
 pub use interface::*;
@@ -18,3 +19,4 @@ pub use nat::*;
 pub use packet::*;
 pub use conntrack::*;
 pub use scenario::*;
+pub use session::*;

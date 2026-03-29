@@ -86,7 +86,41 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                     return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
                 }
 
-                // (c) Bridge member check
+                // (c) Physical NIC ingress frame size check
+                // 물리 NIC는 하드웨어/드라이버 레벨에서 최대 프레임 크기를 제한한다.
+                // 이 검사는 브릿지 멤버 감지보다 먼저 수행 — NIC이 프레임을 수신 못하면 브릿지 무의미.
+                if matches!(iface.kind, InterfaceKind::Physical) {
+                    if let Some(pkt_len) = state.packet_length {
+                        let l2_max_frame = iface.mtu.saturating_add(18).max(9216);
+                        if pkt_len > l2_max_frame {
+                            seq += 1;
+                            trace.push(TraceStep {
+                                seq,
+                                stage: PipelineStage::InterfaceCheck,
+                                description: "physical NIC frame size check".to_string(),
+                                state_before: state.clone(),
+                                state_after: state.clone(),
+                                state_changes: vec![],
+                                matched_rules: vec![],
+                                decision: StageDecision::Drop {
+                                    reason: format!(
+                                        "Frame too large for physical NIC (max={})",
+                                        l2_max_frame
+                                    ),
+                                },
+                                explain: format!(
+                                    "Packet length {} exceeds physical NIC '{}' max receive frame size {} \
+                                     (MTU={} + 18 L2 overhead, min 9216 jumbo). \
+                                     Physical NICs drop oversized frames at driver level.",
+                                    pkt_len, state.ingress_if, l2_max_frame, iface.mtu
+                                ),
+                            });
+                            return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
+                        }
+                    }
+                }
+
+                // (d) Bridge member check
                 if let Some(master) = &iface.master {
                     seq += 1;
                     trace.push(TraceStep {
@@ -133,50 +167,6 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                         );
                     }
                     // bridge_nf_call_iptables=true: continue with normal IP stack path
-                }
-            }
-        }
-    }
-
-    // --- Physical NIC ingress frame size check ---
-    // Physical NICs enforce maximum frame size at the hardware/driver level.
-    // Note: IP MTU (interface.mtu) governs what the host SENDS, not what it receives.
-    // The NIC can receive frames larger than the configured IP MTU.
-    // The actual receive limit is the NIC's max frame size (usually 1518 for standard
-    // Ethernet, 9216 for jumbo frames). We compare against mtu + L2 overhead (18 bytes
-    // for Ethernet header + FCS) as the minimum receivable frame size.
-    // Virtual interfaces (veth, bridge, tun, tap) skip this check entirely.
-    if let Some(ingress_iface) = find_interface(&scenario.interfaces, &state.ingress_if) {
-        if matches!(ingress_iface.kind, InterfaceKind::Physical) {
-            if let Some(pkt_len) = state.packet_length {
-                // L2 max frame = MTU + 14 (Ethernet header) + 4 (FCS) = MTU + 18
-                // But NIC hardware typically accepts up to 9216 (jumbo) even if MTU is 1500.
-                // Use the larger of (mtu + 18) and 9216 as the receive limit.
-                let l2_max_frame = ingress_iface.mtu.saturating_add(18).max(9216);
-                if pkt_len > l2_max_frame {
-                    seq += 1;
-                    trace.push(TraceStep {
-                        seq,
-                        stage: PipelineStage::InterfaceCheck,
-                        description: "physical NIC ingress frame size check".to_string(),
-                        state_before: state.clone(),
-                        state_after: state.clone(),
-                        state_changes: vec![],
-                        matched_rules: vec![],
-                        decision: StageDecision::Drop {
-                            reason: format!(
-                                "Frame too large for physical NIC (MTU={})",
-                                ingress_iface.mtu
-                            ),
-                        },
-                        explain: format!(
-                            "Packet length {} exceeds physical NIC '{}' maximum receive frame size {}. \
-                             Physical NICs drop oversized frames at the driver level. \
-                             Virtual interfaces (veth, bridge, tun, tap) do not enforce this.",
-                            pkt_len, state.ingress_if, l2_max_frame
-                        ),
-                    });
-                    return finalize(scenario, trace, all_matched_rules, FinalVerdict::Drop, &state);
                 }
             }
         }
@@ -301,6 +291,11 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         );
 
         // Split chains: raw (priority <= -200) vs post-conntrack (priority > -200)
+        // Linux netfilter priority 체계:
+        //   RAW 그룹 (conntrack 이전): raw(-300)
+        //   POST_CT 그룹 (conntrack 이후): mangle(-150), nat/dstnat(-100),
+        //     filter(0), security(50), nat/srcnat(100)
+        // nftables filter@prerouting(priority=0)도 post-conntrack에 포함됨
         let (raw_chains, post_ct_chains): (Vec<_>, Vec<_>) =
             all_prerouting_chains.into_iter().partition(|c| c.priority <= -200);
 

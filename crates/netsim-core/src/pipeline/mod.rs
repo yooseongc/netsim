@@ -1,3 +1,4 @@
+pub mod context;
 pub mod xdp;
 pub mod tc_ingress;
 pub mod prerouting;
@@ -5,6 +6,8 @@ pub mod routing;
 pub mod local_input;
 pub mod forward;
 pub mod postrouting;
+
+pub use context::{PipelineContext, StageOutcome, RoutingOutcome};
 
 use crate::model::netfilter::{
     NfAction, NfHook, NfRule, NfVerdict, NetfilterConfig,

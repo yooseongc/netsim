@@ -95,6 +95,8 @@ pub enum PipelineStage {
     BridgeForward,
     /// OUTPUT 체인 (로컬 발신 패킷)
     Output,
+    /// 라우팅 재평가 (mark/DNAT 변경으로 인한 re-routing)
+    Reroute,
 }
 
 impl std::fmt::Display for PipelineStage {
@@ -117,6 +119,7 @@ impl std::fmt::Display for PipelineStage {
             PipelineStage::PreRoutingRaw => write!(f, "PREROUTING_RAW"),
             PipelineStage::BridgeForward => write!(f, "BRIDGE_FORWARD"),
             PipelineStage::Output => write!(f, "OUTPUT"),
+            PipelineStage::Reroute => write!(f, "REROUTE"),
         }
     }
 }

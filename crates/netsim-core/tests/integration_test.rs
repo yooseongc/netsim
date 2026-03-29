@@ -2637,3 +2637,252 @@ fn default_packet_def() -> PacketDef {
         conntrack_state: ConntrackState::New,
     }
 }
+
+// ============================================================
+// Phase 5: TPROXY forces local delivery
+// ============================================================
+#[test]
+fn test_tproxy_forces_local_delivery() {
+    let (rules, tables) = default_routing();
+
+    // TPROXY rule in mangle PREROUTING: redirect HTTP to local proxy
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "mangle".to_string(),
+                chains: vec![NfChain {
+                    name: "prerouting".to_string(),
+                    chain_type: Some(NfChainType::Filter),
+                    hook: Some(NfHook::Prerouting),
+                    priority: Some(-150),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![
+                            NfMatch::Transport {
+                                protocol: TransportProto::Tcp,
+                                field: TransportField::Dport,
+                                op: MatchOp::Eq,
+                                value: "80".to_string(),
+                            },
+                        ],
+                        action: NfAction::Nat {
+                            action: NatAction::Tproxy {
+                                addr: Some("127.0.0.1".parse().unwrap()),
+                                port: 3128,
+                                mark: Some(1),
+                            },
+                        },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    // Packet destined for an external IP (would normally be forwarded)
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "tproxy-local".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run(&scenario);
+
+    // TPROXY should force local delivery (not forwarded, not Tproxy/Stolen)
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery,
+        "TPROXY should force local delivery, got {:?}", result.verdict);
+
+    // Verify TPROXY reroute step is present in trace
+    let reroute_step = result.trace.iter().find(|s| matches!(s.stage, PipelineStage::Reroute));
+    assert!(reroute_step.is_some(), "Expected a Reroute trace step for TPROXY override");
+    let reroute = reroute_step.unwrap();
+    assert!(reroute.explain.contains("TPROXY"), "Reroute explain should mention TPROXY");
+
+    // Verify packet state: tproxy_applied should be true
+    let final_state = &result.trace.last().unwrap().state_after;
+    assert!(final_state.tproxy_applied, "tproxy_applied flag should be set");
+}
+
+// ============================================================
+// Phase 4: Reroute detection in OUTPUT path (mark change + fwmark rules)
+// ============================================================
+#[test]
+fn test_reroute_in_output() {
+    // Set up fwmark-based policy routing:
+    // ip rule priority 100 fwmark 0x1 lookup 100
+    // table 100 has default route via eth1
+    let rules = vec![
+        IpRule {
+            priority: 0,
+            selector: RuleSelector::default(),
+            action: RuleAction::Lookup(255),
+        },
+        IpRule {
+            priority: 100,
+            selector: RuleSelector {
+                fwmark: Some(1),
+                ..Default::default()
+            },
+            action: RuleAction::Lookup(100),
+        },
+        IpRule {
+            priority: 32766,
+            selector: RuleSelector::default(),
+            action: RuleAction::Lookup(254),
+        },
+    ];
+
+    let tables = vec![
+        RoutingTable {
+            id: 255,
+            name: Some("local".to_string()),
+            routes: vec![
+                Route {
+                    destination: "10.0.0.1/32".parse().unwrap(),
+                    route_type: RouteType::Local,
+                    dev: Some("eth0".to_string()),
+                    ..default_route()
+                },
+                Route {
+                    destination: "192.168.1.1/32".parse().unwrap(),
+                    route_type: RouteType::Local,
+                    dev: Some("eth1".to_string()),
+                    ..default_route()
+                },
+                Route {
+                    destination: "127.0.0.1/32".parse().unwrap(),
+                    route_type: RouteType::Local,
+                    dev: Some("lo".to_string()),
+                    ..default_route()
+                },
+            ],
+        },
+        RoutingTable {
+            id: 100,
+            name: Some("custom".to_string()),
+            routes: vec![
+                Route {
+                    destination: "0.0.0.0/0".parse().unwrap(),
+                    gateway: Some("192.168.1.254".parse().unwrap()),
+                    dev: Some("eth1".to_string()),
+                    ..default_route()
+                },
+            ],
+        },
+        RoutingTable {
+            id: 254,
+            name: Some("main".to_string()),
+            routes: vec![
+                Route {
+                    destination: "10.0.0.0/24".parse().unwrap(),
+                    dev: Some("eth0".to_string()),
+                    scope: RouteScope::Link,
+                    ..default_route()
+                },
+                Route {
+                    destination: "192.168.1.0/24".parse().unwrap(),
+                    dev: Some("eth1".to_string()),
+                    scope: RouteScope::Link,
+                    ..default_route()
+                },
+                Route {
+                    destination: "0.0.0.0/0".parse().unwrap(),
+                    gateway: Some("10.0.0.254".parse().unwrap()),
+                    dev: Some("eth0".to_string()),
+                    ..default_route()
+                },
+            ],
+        },
+    ];
+
+    // OUTPUT mangle chain sets mark=1 on all packets
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "mangle".to_string(),
+                chains: vec![NfChain {
+                    name: "output".to_string(),
+                    chain_type: Some(NfChainType::Route),
+                    hook: Some(NfHook::Output),
+                    priority: Some(-150),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![],
+                        action: NfAction::SetMark { value: 1, mask: None },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    // Locally originated packet
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "output-reroute".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        packet: PacketDef {
+            ingress_interface: "lo".to_string(),
+            ethertype: EtherType::Ipv4,
+            src_ip: Some("10.0.0.1".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(443),
+            tcp_flags: Some(TcpFlags { syn: true, ..Default::default() }),
+            conntrack_state: ConntrackState::New,
+            initial_mark: 0,
+            ..default_packet_def()
+        },
+    };
+
+    let result = engine::run_output(&scenario);
+
+    // Packet should be sent successfully (routed via fwmark table 100 → eth1)
+    assert_eq!(result.verdict, FinalVerdict::Sent,
+        "OUTPUT packet should be sent, got {:?}", result.verdict);
+
+    // Verify the mark was set by mangle OUTPUT
+    let final_state = &result.trace.last().unwrap().state_after;
+    assert_eq!(final_state.mark, 1, "Mark should be set to 1 by mangle OUTPUT");
+
+    // Routing via fwmark table 100 → egress should be eth1
+    assert_eq!(final_state.egress_if.as_deref(), Some("eth1"),
+        "With fwmark=1, routing should use table 100 (eth1)");
+
+    // Verify Reroute trace step is present (mark changed + fwmark rules exist)
+    let reroute_step = result.trace.iter().find(|s| matches!(s.stage, PipelineStage::Reroute));
+    assert!(reroute_step.is_some(), "Expected a Reroute trace step for mark-based re-routing");
+    let reroute = reroute_step.unwrap();
+    assert!(reroute.explain.contains("mark"), "Reroute explain should mention mark change");
+}

@@ -55,6 +55,25 @@
   - FinalVerdict::Sent 추가
   - evaluate_chains_subset() 헬퍼 추가
   - 기존 120개 테스트 전체 통과 유지
+- [x] 엔진 Phase 4+5: 라우팅 재평가 + TPROXY 로컬 전달
+  - Phase 4: PipelineStage::Reroute 추가, run()에서 PREROUTING 후 mark/dst 변경 감지, run_output()에서 OUTPUT mark 변경 시 재라우팅 트레이스 기록
+  - Phase 5: TPROXY 적용 시 routing/route_localnet 우회하여 강제 로컬 전달 (skb->sk 소켓 할당 시뮬레이션)
+  - has_fwmark_rules() 유틸리티 추가 (fwmark 기반 정책 라우팅 규칙 감지)
+  - 테스트 2개 추가: test_tproxy_forces_local_delivery, test_reroute_in_output
+  - 기존 74개 + 신규 2개 = 총 76개 테스트 전체 통과
+- [x] 엔진 리팩토링 Phase 2+3: 파이프라인 구조 분리
+  - Phase 2: engine.rs에서 stage 함수 추출 → pipeline/stages/ 디렉토리
+    - interface_check.rs (ingress 인터페이스 검증)
+    - bridge.rs (브릿지 멤버 감지, L2 포워딩)
+    - arp.rs (arp_ignore 처리)
+    - sysctl_checks.rs (rp_filter, route_localnet, icmp_echo_ignore, ip_forward, egress 검증)
+    - mtu_check.rs (MTU 초과/DF 플래그 검사)
+    - engine.rs → 얇은 오케스트레이터로 축소
+  - Phase 3: pipeline/mod.rs에서 chain_eval.rs + nat.rs 분리
+    - chain_eval.rs: 체인 수집/평가/헬퍼 함수 전체 이동
+    - nat.rs: apply_nat() 이동
+    - mod.rs → 모듈 선언 + StageResult + re-export만 유지
+  - 외부 API 변경 없음, 120개 테스트 전체 통과
 - [x] 7단계: 프론트엔드 MVP 구현
   - TypeScript 타입 정의 (project, scenario, trace — Rust IR 미러)
   - API 클라이언트 (fetch 래퍼, 에러 처리)

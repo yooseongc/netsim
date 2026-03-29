@@ -148,13 +148,51 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         return ctx.finalize(v);
     }
 
-    // --- sysctl: route_localnet check ---
-    if let StageOutcome::Terminal(v) = stages::sysctl_checks::check_route_localnet(&mut ctx) {
-        return ctx.finalize(v);
+    // --- Phase 5: TPROXY local delivery override ---
+    // TPROXY assigns the packet to a local socket (skb->sk), forcing local delivery
+    // regardless of routing table result. In Linux, TPROXY-assigned packets bypass
+    // normal routing (including route_localnet checks) because the socket is already set.
+    if ctx.packet.tproxy_applied {
+        ctx.routing_result = Some(crate::pipeline::context::RoutingOutcome::Local);
+        ctx.record_info_step(
+            PipelineStage::Reroute,
+            "TPROXY routing override",
+            StageDecision::LocalDelivery,
+            "TPROXY applied: packet delivered locally via socket assignment (skb->sk). \
+             Routing decision overridden to LOCAL. Packet will proceed through INPUT chains. \
+             route_localnet check skipped (TPROXY bypasses routing).",
+        );
+    }
+
+    // --- sysctl: route_localnet check (skipped for TPROXY) ---
+    if ctx.routing_result.is_none() {
+        if let StageOutcome::Terminal(v) = stages::sysctl_checks::check_route_localnet(&mut ctx) {
+            return ctx.finalize(v);
+        }
     }
 
     // --- Stage 5: Routing Decision ---
-    let routing_decision = {
+    // Record pre-routing state for reroute detection
+    let pre_route_mark = ctx.packet.mark;
+    let pre_route_dst = ctx.packet.dst_ip;
+
+    let routing_decision = if ctx.routing_result.is_some() {
+        // Routing already determined (e.g., by TPROXY override)
+        match &ctx.routing_result {
+            Some(crate::pipeline::context::RoutingOutcome::Local) => StageDecision::LocalDelivery,
+            Some(crate::pipeline::context::RoutingOutcome::ForwardTo { egress_if, next_hop }) => {
+                StageDecision::ForwardTo { egress_if: egress_if.clone(), next_hop: *next_hop }
+            }
+            Some(crate::pipeline::context::RoutingOutcome::Drop { reason }) => {
+                StageDecision::Drop { reason: reason.clone() }
+            }
+            Some(crate::pipeline::context::RoutingOutcome::Reject { reason }) => {
+                StageDecision::Reject { reason: reason.clone() }
+            }
+            None => unreachable!(),
+        }
+    } else {
+        // Normal routing
         let state_before = ctx.packet.clone();
         let result = pipeline::routing::execute(
             &scenario.ip_rules,
@@ -163,6 +201,27 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             &mut ctx.packet,
         );
         ctx.record_step(PipelineStage::RoutingDecision, &state_before, &result);
+
+        // Phase 4: Check if PREROUTING changed mark and fwmark-based policy rules exist.
+        // In Linux, routing already runs after PREROUTING so it sees updated marks.
+        // We record an informational trace if mark changed and fwmark rules exist.
+        if pre_route_mark != ctx.packet.mark || pre_route_dst != ctx.packet.dst_ip {
+            if has_fwmark_rules(scenario) {
+                ctx.record_info_step(
+                    PipelineStage::Reroute,
+                    "mark/dst change detected after PREROUTING",
+                    StageDecision::Continue,
+                    format!(
+                        "PREROUTING changed mark (0x{:x}→0x{:x}) or dst ({:?}→{:?}). \
+                         fwmark-based policy routing rules exist; routing decision \
+                         reflects the updated state.",
+                        pre_route_mark, ctx.packet.mark,
+                        pre_route_dst, ctx.packet.dst_ip,
+                    ),
+                );
+            }
+        }
+
         result.decision.clone()
     };
 
@@ -260,6 +319,11 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
 pub fn run_output(scenario: &Scenario) -> SimulationResult {
     let mut ctx = PipelineContext::from_scenario(scenario);
 
+    // Record initial mark before OUTPUT chains for reroute detection.
+    // In Linux, an initial routing decision is made before OUTPUT chains.
+    // If mangle OUTPUT changes the mark, the kernel re-routes.
+    let initial_mark = ctx.packet.mark;
+
     // --- Stage 1: OUTPUT chains ---
     {
         let all_output_chains = pipeline::collect_chains_for_hook(
@@ -317,6 +381,8 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
     }
 
     // --- Stage 2: Routing Decision (post-OUTPUT) ---
+    // Mark after OUTPUT chains (may have been changed by mangle OUTPUT)
+    let post_output_mark = ctx.packet.mark;
     {
         let state_before = ctx.packet.clone();
         let result = pipeline::routing::execute(
@@ -336,6 +402,25 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
             }
             _ => {}
         }
+    }
+
+    // Phase 4: In OUTPUT path, if mark changed during OUTPUT chains and fwmark-based
+    // policy routing rules exist, record reroute info. In Linux, the kernel performs
+    // an initial routing before OUTPUT chains. If mangle OUTPUT changes the mark,
+    // the kernel re-routes using the new mark. Our pipeline runs routing after OUTPUT,
+    // so it already uses the updated mark. We trace this as a reroute event.
+    if post_output_mark != initial_mark && has_fwmark_rules(scenario) {
+        ctx.record_info_step(
+            PipelineStage::Reroute,
+            "mark-triggered re-routing (OUTPUT)",
+            StageDecision::Continue,
+            format!(
+                "Mark changed during OUTPUT chains (0x{:x}→0x{:x}). \
+                 fwmark-based policy routing rules exist; post-OUTPUT routing \
+                 reflects the updated mark.",
+                initial_mark, post_output_mark,
+            ),
+        );
     }
 
     // --- Stage 3: POSTROUTING chains ---
@@ -363,6 +448,11 @@ pub fn run_output(scenario: &Scenario) -> SimulationResult {
     );
 
     ctx.finalize(FinalVerdict::Sent)
+}
+
+/// Check if any ip rules have fwmark-based selectors (policy routing sensitive to mark)
+fn has_fwmark_rules(scenario: &Scenario) -> bool {
+    scenario.ip_rules.iter().any(|r| r.selector.fwmark.is_some())
 }
 
 fn terminal_verdict(decision: &StageDecision) -> Option<FinalVerdict> {

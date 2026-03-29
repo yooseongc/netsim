@@ -43,6 +43,7 @@
   - R2: ARP→XDP 순서 수정, vlan_id/mac PacketState 추가, egress 존재 검증
   - R3: PipelineStage 라벨 수정 (RpFilter, L2Bypass), compute_state_changes L2 필드 추가
 - [x] 총 74개 테스트 통과 (matcher 26 + 통합 42 + 세션 6)
+- [x] docs/NETWORK_STACK.md 작성 (전체 파이프라인 다이어그램, 단계별 상세, sysctl, 인터페이스, 세션)
 
 ---
 

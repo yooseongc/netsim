@@ -120,54 +120,6 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
                     }
                 }
 
-                // (d) Bridge member check
-                if let Some(master) = &iface.master {
-                    seq += 1;
-                    trace.push(TraceStep {
-                        seq,
-                        stage: PipelineStage::InterfaceCheck,
-                        description: "bridge member detection".to_string(),
-                        state_before: state.clone(),
-                        state_after: state.clone(),
-                        state_changes: vec![],
-                        matched_rules: vec![],
-                        decision: StageDecision::Continue,
-                        explain: format!(
-                            "Interface '{}' is a member of bridge '{}'. \
-                             In Linux, packets arriving on a bridge member go through bridge processing first.",
-                            state.ingress_if, master
-                        ),
-                    });
-
-                    // Bridge L2 forwarding path when bridge_nf_call_iptables=false
-                    if !sysctl.bridge_nf_call_iptables {
-                        seq += 1;
-                        trace.push(TraceStep {
-                            seq,
-                            stage: PipelineStage::BridgeForward,
-                            description: "bridge L2 forwarding".to_string(),
-                            state_before: state.clone(),
-                            state_after: state.clone(),
-                            state_changes: vec![],
-                            matched_rules: vec![],
-                            decision: StageDecision::Continue,
-                            explain: format!(
-                                "bridge_nf_call_iptables=0: packet is forwarded at L2 by bridge '{}' \
-                                 without passing through the IP netfilter stack. \
-                                 Bridge FDB lookup determines the output port.",
-                                master
-                            ),
-                        });
-                        return finalize(
-                            scenario,
-                            trace,
-                            all_matched_rules,
-                            FinalVerdict::Forwarded,
-                            &state,
-                        );
-                    }
-                    // bridge_nf_call_iptables=true: continue with normal IP stack path
-                }
             }
         }
     }
@@ -192,6 +144,51 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
             return finalize(scenario, trace, all_matched_rules, verdict, &state);
         }
         _ => {}
+    }
+
+    // --- Bridge member check (after XDP, before L3 processing) ---
+    // Linux: XDP runs at driver level first, then bridge code processes the frame.
+    // If the ingress interface is a bridge member and bridge_nf_call_iptables=false,
+    // the packet is forwarded at L2 without entering the IP netfilter stack.
+    if let Some(ingress_iface) = find_interface(&scenario.interfaces, &state.ingress_if) {
+        if let Some(master) = &ingress_iface.master {
+            seq += 1;
+            trace.push(TraceStep {
+                seq,
+                stage: PipelineStage::InterfaceCheck,
+                description: "bridge member detection".to_string(),
+                state_before: state.clone(),
+                state_after: state.clone(),
+                state_changes: vec![],
+                matched_rules: vec![],
+                decision: StageDecision::Continue,
+                explain: format!(
+                    "Interface '{}' is a member of bridge '{}'.",
+                    state.ingress_if, master
+                ),
+            });
+
+            if !sysctl.bridge_nf_call_iptables {
+                seq += 1;
+                trace.push(TraceStep {
+                    seq,
+                    stage: PipelineStage::BridgeForward,
+                    description: "bridge L2 forwarding".to_string(),
+                    state_before: state.clone(),
+                    state_after: state.clone(),
+                    state_changes: vec![],
+                    matched_rules: vec![],
+                    decision: StageDecision::Continue,
+                    explain: format!(
+                        "bridge_nf_call_iptables=0: packet forwarded at L2 by bridge '{}' \
+                         without passing through IP netfilter stack.",
+                        master
+                    ),
+                });
+                return finalize(scenario, trace, all_matched_rules, FinalVerdict::Forwarded, &state);
+            }
+            // bridge_nf_call_iptables=true: continue with normal IP stack
+        }
     }
 
     // --- ARP processing (after XDP, before L2 bypass) ---

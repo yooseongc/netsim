@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "name": "sample-xdp-filter",
+  "description": "XDP drop - XDP program on eth0 drops traffic from 10.0.0.200 before it enters the network stack. All other traffic passes.",
+  "interfaces": [
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:0a:00:00:01",
+      "addresses": [
+        { "ip": "10.0.0.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "10.0.0.1/32", "dev": "eth0", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "10.0.0.0/24", "dev": "eth0", "scope": "link" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "xdp": {
+    "programs": [
+      {
+        "interface": "eth0",
+        "mode": "generic",
+        "rules": [
+          {
+            "matches": [
+              { "type": "ip", "field": "saddr", "op": "eq", "value": "10.0.0.200" }
+            ],
+            "action": "drop",
+            "comment": "Drop all traffic from blocked host"
+          }
+        ],
+        "default_action": "pass"
+      }
+    ]
+  },
+  "packet": {
+    "ingress_interface": "eth0",
+    "src_mac": "02:00:0a:00:00:c8",
+    "dst_mac": "02:00:0a:00:00:01",
+    "src_ip": "10.0.0.200",
+    "dst_ip": "10.0.0.1",
+    "protocol": "tcp",
+    "src_port": 60000,
+    "dst_port": 80,
+    "tcp_flags": { "syn": true },
+    "ttl": 64
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "Blocked Host", "ip": "10.0.0.200", "port": 60000, "interface": "eth0" },
+      { "role": "local_server", "name": "Web Server", "ip": "10.0.0.1", "port": 80 }
+    ],
+    "flows": [
+      { "name": "XDP Filtered Traffic", "source": "Blocked Host", "destination": "Web Server", "protocol": "tcp", "description": "Traffic dropped at XDP layer before entering network stack" }
+    ]
+  }
+}

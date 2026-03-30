@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "name": "sample-mtu-exceeded",
+  "description": "MTU exceeded with DF flag - A 4000-byte packet with Don't Fragment flag arrives on eth0 (MTU 9000) but cannot be forwarded out eth1 (MTU 1500). ICMP Fragmentation Needed is sent back.",
+  "interfaces": [
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:0a:00:00:01",
+      "addresses": [
+        { "ip": "10.0.0.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 9000,
+      "state": "up",
+      "kind": "physical"
+    },
+    {
+      "name": "eth1",
+      "index": 3,
+      "mac": "02:00:c0:a8:01:01",
+      "addresses": [
+        { "ip": "192.168.1.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "10.0.0.1/32", "dev": "eth0", "scope": "host", "route_type": "local" },
+        { "destination": "192.168.1.1/32", "dev": "eth1", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "10.0.0.0/24", "dev": "eth0", "scope": "link" },
+        { "destination": "192.168.1.0/24", "dev": "eth1", "scope": "link" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "sysctl": {
+    "ipv4": { "ip_forward": true }
+  },
+  "packet": {
+    "ingress_interface": "eth0",
+    "src_mac": "02:00:0a:00:00:64",
+    "dst_mac": "02:00:0a:00:00:01",
+    "src_ip": "10.0.0.100",
+    "dst_ip": "192.168.1.100",
+    "protocol": "tcp",
+    "src_port": 42000,
+    "dst_port": 80,
+    "tcp_flags": { "syn": false, "ack": true },
+    "ttl": 64,
+    "packet_length": 4000,
+    "df_flag": true
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "Jumbo Client", "ip": "10.0.0.100", "port": 42000, "interface": "eth0" },
+      { "role": "remote_server", "name": "Server", "ip": "192.168.1.100", "port": 80, "interface": "eth1" }
+    ],
+    "flows": [
+      { "name": "MTU Exceeded", "source": "Jumbo Client", "destination": "Server", "protocol": "tcp", "description": "4000-byte packet with DF dropped at egress MTU check (1500)" }
+    ]
+  }
+}

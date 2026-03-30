@@ -15,4 +15,5 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .merge(project::routes(state.clone()))
         .merge(simulation::routes(state.clone()))
         .merge(import::routes(state))
+        .merge(crate::samples::routes())
 }

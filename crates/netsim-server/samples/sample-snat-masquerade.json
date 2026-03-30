@@ -1,0 +1,112 @@
+{
+  "version": "1.0",
+  "name": "sample-snat-masquerade",
+  "description": "SNAT/Masquerade - Internal client 192.168.1.100 accesses the internet through NAT. Postrouting masquerade rewrites source IP on egress via eth0 (WAN).",
+  "interfaces": [
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:cb:00:71:01",
+      "addresses": [
+        { "ip": "203.0.113.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    },
+    {
+      "name": "eth1",
+      "index": 3,
+      "mac": "02:00:c0:a8:01:01",
+      "addresses": [
+        { "ip": "192.168.1.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "203.0.113.1/32", "dev": "eth0", "scope": "host", "route_type": "local" },
+        { "destination": "192.168.1.1/32", "dev": "eth1", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "203.0.113.0/24", "dev": "eth0", "scope": "link" },
+        { "destination": "192.168.1.0/24", "dev": "eth1", "scope": "link" },
+        { "destination": "0.0.0.0/0", "gateway": "203.0.113.254", "dev": "eth0" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "netfilter": {
+    "nftables": {
+      "tables": [
+        {
+          "family": "ip",
+          "name": "nat",
+          "chains": [
+            {
+              "name": "postrouting",
+              "chain_type": "nat",
+              "hook": "postrouting",
+              "priority": 100,
+              "policy": "accept",
+              "rules": [
+                {
+                  "matches": [
+                    { "type": "oif", "name": "eth0" }
+                  ],
+                  "action": { "type": "nat", "action": { "type": "masquerade" } },
+                  "comment": "Masquerade outbound traffic on WAN interface"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "neighbors": [
+    {
+      "ip": "203.0.113.254",
+      "mac": "02:00:cb:00:71:fe",
+      "interface": "eth0",
+      "state": "permanent"
+    }
+  ],
+  "sysctl": {
+    "ipv4": { "ip_forward": true }
+  },
+  "packet": {
+    "ingress_interface": "eth1",
+    "src_mac": "02:00:c0:a8:01:64",
+    "dst_mac": "02:00:c0:a8:01:01",
+    "src_ip": "192.168.1.100",
+    "dst_ip": "8.8.8.8",
+    "protocol": "tcp",
+    "src_port": 40000,
+    "dst_port": 443,
+    "tcp_flags": { "syn": true },
+    "ttl": 64
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "LAN Client", "ip": "192.168.1.100", "port": 40000, "interface": "eth1" },
+      { "role": "remote_server", "name": "Internet Server", "ip": "8.8.8.8", "port": 443 }
+    ],
+    "flows": [
+      { "name": "Masqueraded HTTPS", "source": "LAN Client", "destination": "Internet Server", "protocol": "tcp", "description": "LAN client HTTPS traffic masqueraded on WAN egress" }
+    ]
+  }
+}

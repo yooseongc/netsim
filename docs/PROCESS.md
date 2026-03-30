@@ -103,6 +103,80 @@
   - SimulationContext (결과 전달용 React Context)
   - lucide-react 아이콘 추가
   - pnpm build 통과 확인
+- [x] 시나리오 에디터 고도화 (7탭 폼 에디터)
+  - ScenarioEditorPage: YAML/Topology 2탭 → Packet/Interfaces/Routing/Rules/XDP/YAML/Topology 7탭 확장
+  - PacketEditor: L2(EtherType, MAC, VLAN) / L3(IP, TTL, DSCP, DF) / L4(포트, TCP flags, ICMP) / Conntrack 폼
+  - InterfacesEditor: Interface CRUD + 주소 관리 + 가상 인터페이스(veth, bridge, vlan, bond) 관계 편집
+  - RoutingEditor: RoutingTable CRUD(경로 추가/편집/삭제) + IP Rule(정책 라우팅) 편집
+  - RulesEditor: nftables 테이블/체인/규칙 3단계 CRUD + NfMatch/NfAction 인라인 편집기
+  - XdpEditor: XDP 프로그램 CRUD + 규칙(매치+액션) 편집, redirect 포함
+  - YAML ↔ Scenario 양방향 동기화 (탭 전환 시 자동 파싱/직렬화)
+  - pnpm build 통과 확인
+- [x] Visual Topology Editor 구현 (React Flow 기반)
+  - @xyflow/react + @dagrejs/dagre 의존성 추가
+  - TopologyCanvas: React Flow 캔버스 (드래그 앤 드롭, 줌/팬, MiniMap)
+  - EndpointNode: 역할별 색상/아이콘 커스텀 노드 (6 roles)
+  - FlowEdge: 플로우명 + 프로토콜 뱃지 커스텀 엣지
+  - TopologyToolbar: Add Endpoint 드롭다운 + Auto Layout (dagre LR)
+  - TopologyPropertiesPanel: 선택 노드/엣지 상세 + Edit/Delete
+  - 노드 드래그 → position 자동 저장, Handle 드래그 → FlowForm 연결
+  - Topology 탭을 메인(첫 번째) 탭으로 승격
+  - Endpoint 타입에 position 필드 추가
+  - DeviceNode: 중앙 Linux Host 노드 (인터페이스/라우트/규칙 수 표시)
+  - InterfaceNode: 네트워크 인터페이스 노드 (이름, IP, MTU, 상태, 종류)
+  - Device ↔ Interface 내부 링크 + Endpoint ↔ Interface 외부 링크 자동 생성
+  - TopologyCanvas 확장: 장비+인터페이스+엔드포인트 3단계 구조
+  - PropertiesPanel: 인터페이스 상세 정보 표시 + 삭제 지원
+  - Topology 타입에 node_positions 필드 추가 (device/interface 위치 저장)
+  - pnpm build 통과 확인
+- [x] 12개 샘플 시나리오 구현 (내장형)
+  - 바이너리 내장 (include_str! + 메모리 API, 파일시스템 미사용)
+  - GET /api/v1/samples, GET /api/v1/samples/:name, POST /api/v1/samples/:name/simulate
+  - basic-forward, dnat-port-forward, snat-masquerade, firewall-drop
+  - icmp-ping, policy-routing, xdp-filter, bridge-forward
+  - local-delivery, ttl-exceeded, mtu-exceeded, tproxy
+- [x] 사이드바 PROJECTS/SAMPLES 구조 개편
+  - AppShell 사이드바: PROJECTS (접이식) + SAMPLES (접이식) 2섹션
+  - 샘플 클릭 → SampleViewerPage (YAML 읽기전용 + Run + Copy to Project)
+- [x] 시뮬레이션 결과 다이얼로그
+  - SimulationResultDialog 컴포넌트 (모달, Summary + PipelineFlow)
+  - ScenarioEditorPage: navigate 대신 다이얼로그로 결과 표시
+  - SampleViewerPage: Run → 다이얼로그로 결과 표시
+- [x] 장비 내부/외부 구분
+  - Device Boundary: group 노드로 장비 영역 표현 (점선 경계)
+  - Local 엔드포인트: parentId로 장비 내부 배치 (extent: parent)
+  - Remote 엔드포인트: 장비 외부 배치
+  - Toolbar 드롭다운: Inside Device / Outside Device 구분
+- [x] 시뮬레이션 리플레이 애니메이션
+  - SimulationReplayBar: Play/Pause/Step 컨트롤 + 속도 조절 + 프로그레스 바
+  - 단계별 노드/엣지 하이라이트 (ingress=파랑, device=보라, egress=노랑)
+  - Drop=빨간 glow, Local Delivery=초록 glow, Forward=노란 glow
+  - Run 후 자동 Topology 탭 전환 + 리플레이 시작
+- [x] UX 개선
+  - 인터페이스 추가 시 랜덤 IP/MAC 초기값 자동 생성
+  - forwarded verdict 시 egress interface 헤더에 표시
+  - 캔버스 노드 사이즈 축소 (160px endpoint, 140px interface)
+  - 세로 스크롤 수정 (AppShell main padding을 페이지 레벨로 이동)
+  - 415 에러 수정 (saveScenarioYaml → saveScenario JSON)
+- [x] Bridge FDB + ARP 시뮬레이션 + L2 헤더 재작성
+  - NeighborEntry (ARP 테이블) + FdbEntry (Bridge FDB) 모델 추가
+  - PipelineContext에 arp_table, fdb HashMap 추가
+  - PipelineStage: BridgeFdbLookup, ArpResolve, L2Rewrite 3종 추가
+  - Bridge FDB: source MAC 동적 학습 + 정적 FDB 조회 + unknown MAC flooding
+  - ARP 해석: neighbor 테이블 조회 → 미스 시 ARP request 시뮬레이션 (proxy_arp, arp_filter 반영)
+  - L2 재작성: 포워딩 시 src_mac = egress IF MAC, dst_mac = ARP 결과
+  - 엔진 통합: routing → egress_check → ARP resolve → L2 rewrite → ip_forward → FORWARD
+  - 하위 호환: neighbors 미설정 시 기존 동작 유지
+  - 테스트 10개 추가 (FDB 3, ARP 4, L2 rewrite 1, proxy_arp 1, arp_filter 1)
+  - 총 144개 테스트 통과 (기존 134 + 신규 10)
+- [x] Import UI 페이지 구현
+  - ImportPage 컴포넌트 (5개 textarea: ip addr, ip rule, ip route, nft list ruleset, iptables-save)
+  - Preview 버튼 → ValidationReport 표시 (parsed_ok/partial/unsupported 구분)
+  - Import to Project 버튼 + merge strategy 선택 (replace/merge)
+  - 라우트 추가: /projects/:name/import
+  - ScenarioEditorPage에 Import 버튼 추가
+  - API 클라이언트 타입 강화 (ImportParseRequest, ImportApplyRequest, ImportResponse)
+  - pnpm build 통과 확인
 
 ---
 
@@ -118,4 +192,5 @@
 | 6단계 | 웹 서버 구현 (netsim-server) | 완료 |
 | 7단계 | 프론트엔드 구현 | 완료 |
 | 엔진 개편 | Phase 1~7 (PipelineContext, stages, chain_eval, routing 재호출, TPROXY, bridge NF, conntrack, loopback, endpoint roles) | 완료 |
-| 8단계 | 문서 분리 (docs/nstack/) + 통합 배포 | 진행 중 |
+| 8단계 | 프론트엔드 고도화 (Visual Topology, 샘플, 리플레이) | 완료 |
+| 9단계 | Docker 빌드 + 통합 배포 | 미진행 |

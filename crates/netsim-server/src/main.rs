@@ -5,6 +5,7 @@ mod api;
 mod storage;
 mod state;
 mod error;
+mod samples;
 
 #[tokio::main]
 async fn main() {

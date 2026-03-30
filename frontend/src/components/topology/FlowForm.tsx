@@ -9,9 +9,11 @@ interface FlowFormProps {
   endpointNames: string[];
   onSave: (flow: TrafficFlow) => void;
   onCancel: () => void;
+  defaultSource?: string;
+  defaultDestination?: string;
 }
 
-export function FlowForm({ flow, endpointNames, onSave, onCancel }: FlowFormProps) {
+export function FlowForm({ flow, endpointNames, onSave, onCancel, defaultSource, defaultDestination }: FlowFormProps) {
   const [name, setName] = useState('');
   const [source, setSource] = useState('');
   const [destination, setDestination] = useState('');
@@ -25,13 +27,11 @@ export function FlowForm({ flow, endpointNames, onSave, onCancel }: FlowFormProp
       setDestination(flow.destination);
       setProtocol(flow.protocol ?? 'tcp');
       setDescription(flow.description ?? '');
-    } else if (endpointNames.length >= 2) {
-      setSource(endpointNames[0]);
-      setDestination(endpointNames[1]);
-    } else if (endpointNames.length === 1) {
-      setSource(endpointNames[0]);
+    } else {
+      setSource(defaultSource ?? (endpointNames.length >= 1 ? endpointNames[0] : ''));
+      setDestination(defaultDestination ?? (endpointNames.length >= 2 ? endpointNames[1] : ''));
     }
-  }, [flow, endpointNames]);
+  }, [flow, endpointNames, defaultSource, defaultDestination]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

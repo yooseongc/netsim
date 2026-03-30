@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use std::net::IpAddr;
 use crate::model::conntrack::ConntrackEntry;
+use crate::model::neighbor::NeighborEntry;
+use crate::model::bridge_fdb::FdbEntry;
 use crate::model::packet::PacketState;
 use crate::model::scenario::Scenario;
 use crate::pipeline::StageResult;
@@ -36,6 +40,10 @@ pub struct PipelineContext<'a> {
     pub needs_reroute: bool,
     /// Conntrack entry for the current connection (NAT tuple storage for established flows)
     pub conntrack_entry: Option<ConntrackEntry>,
+    /// Runtime ARP/neighbor table: (interface, ip) → NeighborEntry
+    pub arp_table: HashMap<(String, IpAddr), NeighborEntry>,
+    /// Runtime bridge FDB: (bridge_name, mac) → FdbEntry
+    pub fdb: HashMap<(String, String), FdbEntry>,
 }
 
 /// Pipeline stage outcome
@@ -51,6 +59,31 @@ pub enum StageOutcome {
 
 impl<'a> PipelineContext<'a> {
     pub fn from_scenario(scenario: &'a Scenario) -> Self {
+        // Build ARP table from scenario neighbors
+        let mut arp_table = HashMap::new();
+        for entry in &scenario.neighbors {
+            arp_table.insert(
+                (entry.interface.clone(), entry.ip),
+                entry.clone(),
+            );
+        }
+
+        // Build FDB from scenario bridge_fdb
+        let mut fdb = HashMap::new();
+        for entry in &scenario.bridge_fdb {
+            // Find which bridge this port belongs to
+            if let Some(iface) = scenario.interfaces.iter().find(|i| i.name == entry.port) {
+                if let Some(master) = &iface.master {
+                    fdb.insert((master.clone(), entry.mac.clone()), entry.clone());
+                }
+            }
+            // Also allow entries for bridge interfaces directly
+            let bridge_iface = scenario.interfaces.iter().find(|i| i.name == entry.port && !i.bridge_members.is_empty());
+            if let Some(br) = bridge_iface {
+                fdb.insert((br.name.clone(), entry.mac.clone()), entry.clone());
+            }
+        }
+
         Self {
             packet: PacketState::from_packet_def(&scenario.packet),
             scenario,
@@ -60,6 +93,8 @@ impl<'a> PipelineContext<'a> {
             routing_result: None,
             needs_reroute: false,
             conntrack_entry: None,
+            arp_table,
+            fdb,
         }
     }
 

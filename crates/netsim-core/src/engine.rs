@@ -255,6 +255,20 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         result.decision.clone()
     };
 
+    // Store routing result for downstream stages (ARP resolve, etc.)
+    match &routing_decision {
+        StageDecision::ForwardTo { egress_if, next_hop } => {
+            ctx.routing_result = Some(crate::pipeline::context::RoutingOutcome::ForwardTo {
+                egress_if: egress_if.clone(),
+                next_hop: *next_hop,
+            });
+        }
+        StageDecision::LocalDelivery => {
+            ctx.routing_result = Some(crate::pipeline::context::RoutingOutcome::Local);
+        }
+        _ => {}
+    }
+
     match &routing_decision {
         StageDecision::LocalDelivery => {
             // --- sysctl: icmp_echo_ignore_all ---
@@ -276,6 +290,16 @@ pub fn run(scenario: &Scenario) -> SimulationResult {
         StageDecision::ForwardTo { .. } => {
             // --- (d) Egress interface existence + state check ---
             if let StageOutcome::Terminal(v) = stages::sysctl_checks::check_egress_interface(&mut ctx) {
+                return ctx.finalize(v);
+            }
+
+            // --- ARP resolution: resolve next-hop MAC address ---
+            if let StageOutcome::Terminal(v) = stages::arp::resolve_arp(&mut ctx) {
+                return ctx.finalize(v);
+            }
+
+            // --- L2 header rewriting: update src_mac/dst_mac ---
+            if let StageOutcome::Terminal(v) = stages::l2_rewrite::rewrite_l2_headers(&mut ctx) {
                 return ctx.finalize(v);
             }
 

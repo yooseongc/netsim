@@ -142,6 +142,8 @@ fn base_scenario() -> Scenario {
         xdp: XdpConfig::default(),
         sysctl: SysctlConfig::default(),
         topology: None,
+        neighbors: vec![],
+        bridge_fdb: vec![],
         packet: PacketDef::default(), // placeholder, will be overridden
     }
 }

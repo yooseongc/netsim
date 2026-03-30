@@ -2,7 +2,9 @@
 
 ## 1. 개요
 
-netsim 프론트엔드는 React + TypeScript + Vite 기반으로 구현하며, shadcn/ui + Tailwind CSS를 사용한다.
+netsim 프론트엔드는 React + TypeScript + Vite 기반으로 구현되며, Tailwind CSS + Lucide React 아이콘을 사용한다.
+네트워크 토폴로지는 @xyflow/react (React Flow) 캔버스, 자동 레이아웃은 @dagrejs/dagre를 사용한다.
+상태 관리는 React hooks + Context API로 처리한다.
 
 ---
 
@@ -11,75 +13,76 @@ netsim 프론트엔드는 React + TypeScript + Vite 기반으로 구현하며, s
 ```
 frontend/
 ├── package.json
-├── tsconfig.json
+├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
 ├── vite.config.ts
 ├── tailwind.config.ts
-├── postcss.config.js
 ├── index.html
-├── components.json               # shadcn/ui 설정
 └── src/
-    ├── main.tsx
-    ├── App.tsx
-    ├── api/                      # API 클라이언트
-    │   └── client.ts
-    ├── types/                    # TypeScript 타입 (백엔드 IR 미러)
-    │   ├── scenario.ts
-    │   ├── packet.ts
-    │   ├── trace.ts
-    │   └── project.ts
+    ├── main.tsx                   # React 엔트리포인트 (BrowserRouter)
+    ├── App.tsx                    # 라우트 정의
+    ├── index.css                  # Tailwind 디렉티브
+    ├── api/
+    │   └── client.ts              # fetch 기반 API 클라이언트 (타입 세이프)
+    ├── types/
+    │   ├── scenario.ts            # Scenario IR 타입 (Rust serde 미러)
+    │   ├── trace.ts               # 시뮬레이션 결과/트레이스 타입
+    │   └── project.ts             # 프로젝트 메타데이터 타입
     ├── pages/
-    │   ├── ProjectListPage.tsx
-    │   ├── ScenarioEditorPage.tsx
-    │   ├── SimulationResultPage.tsx
-    │   └── ImportPage.tsx
+    │   ├── ProjectListPage.tsx    # 프로젝트 목록/생성/삭제
+    │   ├── ScenarioEditorPage.tsx  # 7탭 시나리오 에디터 + Save/Run
+    │   ├── SampleViewerPage.tsx   # 샘플 뷰어 (7탭, 읽기전용 + Run + Copy)
+    │   ├── SimulationResultPage.tsx # 트레이스 결과 (레거시, 다이얼로그로 대체)
+    │   └── ImportPage.tsx          # 시스템 설정 import
     ├── components/
-    │   ├── ui/                   # shadcn/ui 프리미티브
     │   ├── layout/
-    │   │   ├── AppShell.tsx
-    │   │   ├── Sidebar.tsx
-    │   │   └── Header.tsx
-    │   ├── editor/
-    │   │   ├── PacketEditor.tsx
-    │   │   ├── InterfaceEditor.tsx
-    │   │   ├── RoutingEditor.tsx
-    │   │   ├── PolicyRoutingEditor.tsx
-    │   │   ├── NftablesEditor.tsx
-    │   │   ├── IptablesEditor.tsx
-    │   │   ├── XdpEditor.tsx
-    │   │   └── YamlEditor.tsx
-    │   ├── trace/
-    │   │   ├── TraceTimeline.tsx
-    │   │   ├── TraceStepCard.tsx
-    │   │   ├── PacketStateView.tsx
-    │   │   └── ExplainPanel.tsx
+    │   │   └── AppShell.tsx        # Header + Sidebar(PROJECTS/SAMPLES) + Content
+    │   ├── editors/
+    │   │   ├── PacketEditor.tsx    # L2/L3/L4/Conntrack 패킷 속성 폼
+    │   │   ├── InterfacesEditor.tsx # Interface CRUD + 주소/가상관계 관리
+    │   │   ├── RoutingEditor.tsx   # RoutingTable + Route CRUD + IP Rule 편집
+    │   │   ├── RulesEditor.tsx     # nftables 테이블→체인→규칙 3단계 CRUD
+    │   │   └── XdpEditor.tsx       # XDP 프로그램 + 규칙(매치+액션) 편집
     │   ├── topology/
-    │   │   ├── TopologyEditor.tsx    # 엔드포인트/트래픽 플로우 시각 편집기
-    │   │   ├── EndpointForm.tsx       # 엔드포인트 추가/편집 모달
-    │   │   └── FlowForm.tsx           # 트래픽 플로우 추가/편집 모달
-    │   └── import/
-    │       ├── ImportForm.tsx
-    │       ├── ImportPreview.tsx
-    │       └── ValidationReport.tsx
-    ├── hooks/
-    │   ├── useSimulation.ts
-    │   ├── useProject.ts
-    │   └── useImport.ts
+    │   │   ├── TopologyEditor.tsx  # TopologyCanvas 래퍼 (props 전달)
+    │   │   ├── TopologyCanvas.tsx  # React Flow 캔버스 메인 (노드/엣지/리플레이)
+    │   │   ├── TopologyToolbar.tsx # Add Endpoint + Auto Layout 도구
+    │   │   ├── TopologyPropertiesPanel.tsx # 선택 노드/엣지 속성 패널
+    │   │   ├── SimulationReplayBar.tsx    # 시뮬레이션 리플레이 컨트롤 바
+    │   │   ├── useTopologyGraph.ts # Topology ↔ React Flow 변환
+    │   │   ├── useAutoLayout.ts   # dagre 자동 레이아웃
+    │   │   ├── EndpointForm.tsx    # 엔드포인트 추가/편집 모달
+    │   │   ├── FlowForm.tsx        # 트래픽 플로우 추가/편집 모달
+    │   │   ├── nodes/
+    │   │   │   ├── DeviceNode.tsx  # 장비 경계 group 노드 (Linux Host)
+    │   │   │   ├── InterfaceNode.tsx # 인터페이스 노드 (name, IP, MTU, state)
+    │   │   │   └── EndpointNode.tsx  # 엔드포인트 노드 (역할별 색상/아이콘)
+    │   │   └── edges/
+    │   │       └── FlowEdge.tsx    # 트래픽 플로우 엣지 (이름+프로토콜 뱃지)
+    │   └── trace/
+    │       ├── SimulationResultDialog.tsx # 결과 다이얼로그 (Summary + PipelineFlow)
+    │       ├── PipelineFlow.tsx    # 트레이스 수직 타임라인
+    │       ├── TraceStepCard.tsx   # 개별 단계 상세 카드
+    │       ├── StateDiffView.tsx   # before/after 상태 비교
+    │       └── VerdictBadge.tsx    # verdict/decision 색상 뱃지
+    ├── contexts/
+    │   └── SimulationContext.tsx   # 시뮬레이션 결과 공유용 React Context
     └── lib/
-        └── utils.ts              # 유틸리티 (cn 함수 등)
+        └── utils.ts               # cn() 유틸리티 (clsx + tailwind-merge)
 ```
 
 ---
 
-## 3. 페이지 구조 및 라우팅
+## 3. 라우팅
 
 | Route | Page | 설명 |
 |-------|------|------|
 | `/` | `ProjectListPage` | 프로젝트 목록, 생성, 삭제 |
-| `/projects/:name` | `ScenarioEditorPage` | 시나리오 편집 + 시뮬레이션 실행 |
-| `/projects/:name/result/:id` | `SimulationResultPage` | trace 결과 시각화 |
+| `/projects/:name` | `ScenarioEditorPage` | 7탭 시나리오 에디터 + 시뮬레이션 실행 |
+| `/projects/:name/result` | `SimulationResultPage` | 트레이스 결과 (레거시) |
 | `/projects/:name/import` | `ImportPage` | 시스템 설정 import |
+| `/samples/:name` | `SampleViewerPage` | 샘플 뷰어 (읽기전용 7탭) |
 
-React Router를 사용한다.
+React Router v7 (BrowserRouter) 사용.
 
 ---
 
@@ -87,20 +90,22 @@ React Router를 사용한다.
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Header (netsim 로고, 프로젝트 breadcrumb)        │
+│  Header (netsim 로고 + breadcrumb)                │
 ├──────────┬───────────────────────────────────────┤
 │ Sidebar  │  Main Content Area                    │
 │          │                                       │
-│ • 프로젝트│  (현재 페이지 콘텐츠)                   │
-│   목록   │                                       │
-│ • 네비   │                                       │
+│ PROJECTS │  (현재 페이지 콘텐츠)                   │
+│  ▾ proj1 │                                       │
+│  ▾ proj2 │                                       │
 │          │                                       │
-├──────────┴───────────────────────────────────────┤
-│  (상태바 - 선택적)                                 │
-└──────────────────────────────────────────────────┘
+│ SAMPLES  │                                       │
+│  ▾ basic │                                       │
+│  ▾ dnat  │                                       │
+└──────────┴───────────────────────────────────────┘
 ```
 
-`AppShell`이 Header, Sidebar, Main Content 영역을 조합한다.
+- `AppShell`: Header + Sidebar(PROJECTS/SAMPLES 접이식) + Main Content
+- Sidebar: 사용자 프로젝트 목록 + 내장 샘플 12개
 
 ---
 
@@ -108,180 +113,141 @@ React Router를 사용한다.
 
 ### 5.1 ProjectListPage
 
-- 프로젝트 카드 그리드 또는 테이블
-- 새 프로젝트 생성 다이얼로그
-- 프로젝트 삭제/복제 기능
-- 각 카드: 이름, 설명, 최종 수정일, 시뮬레이션 실행 횟수
+- 프로젝트 카드 그리드 레이아웃
+- 새 프로젝트 생성 다이얼로그 (이름 + 설명)
+- 프로젝트 삭제 기능
+- 각 카드 클릭 → ScenarioEditorPage로 이동
 
 ### 5.2 ScenarioEditorPage
 
-탭 기반 에디터:
+7개 탭 기반 에디터. Topology 탭이 기본(첫 번째):
 
 ```
-┌───────────────────────────────────────────────────┐
-│ [Packet] [Interfaces] [Routing] [Rules] [XDP] [YAML] │
-├───────────────────────────────────────────────────┤
-│                                                   │
-│  (활성 탭의 에디터 콘텐츠)                          │
-│                                                   │
-├───────────────────────────────────────────────────┤
-│  [Validate]  [Import]  [▶ Run Simulation]         │
-└───────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ [Topology] [Packet] [Interfaces] [Routing] [Rules] [XDP] [YAML] │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  ┌──── Linux Host (Device Boundary) ─────────────────────┐    │
+│  │ [eth0: 10.0.0.1/24]      [eth1: 192.168.1.1/24]     │    │
+│  │                                                       │    │
+│  │  [Local Client]            [Local Server]            │    │
+│  └───────────────────────────────────────────────────────┘    │
+│  [Remote Client] ──flow──▶              ◀── [Remote Server]  │
+│                                                                │
+│  ┌─ Replay Bar ──────────────────────────────────────────┐    │
+│  │ ◀ ▶ ▶▶ │ 1x │ 3/9 │ PREROUTING │ CONTINUE │ ...     │    │
+│  └────────────────────────────────────────────────────────┘    │
+├────────────────────────────────────────────────────────────────┤
+│  [Save]  [Import]  [▶ Run Simulation]                          │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-**Packet 탭**: 패킷 속성 폼 (ingress interface, src/dst IP, protocol, port, mark 등)
-**Interfaces 탭**: 인터페이스 테이블 (추가/수정/삭제)
-**Routing 탭**: ip rule 테이블 + routing table 별 route 테이블
-**Rules 탭**: nftables/iptables 규칙 편집 (테이블 → 체인 → 규칙 계층 구조)
-**XDP 탭**: 인터페이스별 XDP 프로그램 규칙
-**YAML 탭**: 전체 시나리오 raw YAML 편집 (파워 유저용)
+**Topology 탭 (React Flow 캔버스):**
+- DeviceNode: 장비 경계 (group 노드, 점선 사각형)
+- InterfaceNode: 인터페이스 포트 (장비 내부, 상단 배치)
+- EndpointNode: Local은 장비 내부, Remote는 장비 외부
+- FlowEdge: 트래픽 플로우 (애니메이션 화살표)
+- TopologyToolbar: Add Endpoint (Inside/Outside 구분) + Auto Layout
+- TopologyPropertiesPanel: 선택 항목 속성 (우측 슬라이드)
+- SimulationReplayBar: Play/Pause/Step + 속도 조절 + 단계별 하이라이트
 
-### 5.3 SimulationResultPage
+**시뮬레이션 리플레이:**
+- Run 후 자동으로 Topology 탭 전환
+- 단계별 노드/엣지 하이라이트 (ingress=파랑, device=보라, egress=노랑)
+- 최종: Drop=빨강, Local Delivery=초록, Forwarded → egress 표시
+- SimulationResultDialog: 다른 탭에서는 모달 다이얼로그로 결과 표시
 
-```
-┌───────────────────────────────────────────────────┐
-│  Summary Card                                      │
-│  Verdict: FORWARDED │ Egress: eth1                │
-│  Next-hop: 192.168.1.254 │ NAT: SNAT applied     │
-├───────────────────────────────────────────────────┤
-│  Trace Timeline                                    │
-│  ┌─[1] XDP ──── PASS ────────────────────┐        │
-│  ├─[2] tc ingress ──── PASS ─────────────┤        │
-│  ├─[3] conntrack ──── NEW ───────────────┤        │
-│  ├─[4] PREROUTING ──── ACCEPT (DNAT) ───┤        │
-│  ├─[5] Routing ──── FORWARD via eth1 ───┤        │
-│  ├─[6] FORWARD ──── ACCEPT ─────────────┤        │
-│  └─[7] POSTROUTING ──── ACCEPT (SNAT) ──┘        │
-├───────────────────────────────────────────────────┤
-│  Step Detail (선택된 단계)                          │
-│  ┌─────────────┬──────────────┐                   │
-│  │ State Before│ State After  │                   │
-│  │ src: A      │ src: B  (◀) │                   │
-│  │ dst: C      │ dst: C      │                   │
-│  └─────────────┴──────────────┘                   │
-│  Matched Rules: [table:chain rule#3]              │
-│  Explain: "SNAT applied because..."               │
-└───────────────────────────────────────────────────┘
-```
+**나머지 탭:**
 
-**TraceTimeline**: 수직 스텝 리스트, 단계별 색상 코딩
-**TraceStepCard**: 클릭 시 확장되는 상세 뷰
-**PacketStateView**: before/after 나란히 표시, 변경된 필드 하이라이트
-**ExplainPanel**: 자연어/구조화 설명
+| 탭 | 컴포넌트 | 역할 |
+|----|---------|------|
+| Packet | `PacketEditor` | L2/L3/L4/Conntrack 폼. 프로토콜별 조건부 필드 |
+| Interfaces | `InterfacesEditor` | CRUD + 랜덤 IP/MAC 초기값 자동 생성 |
+| Routing | `RoutingEditor` | RoutingTable + Route + IP Rule |
+| Rules | `RulesEditor` | nftables 테이블→체인→규칙 3단계 |
+| XDP | `XdpEditor` | XDP 프로그램 + 규칙 |
+| YAML | textarea | raw YAML 편집 (파워 유저) |
+
+### 5.3 SampleViewerPage
+
+- ScenarioEditorPage와 동일한 7탭 UI (읽기전용)
+- Save 대신 **Copy to Project** 버튼
+- Run → 토폴로지 리플레이 / 다이얼로그 결과
 
 ### 5.4 ImportPage
 
-```
-┌───────────────────────────────────────────────────┐
-│  Import System Configuration                       │
-├───────────────────────────────────────────────────┤
-│  ┌─ ip addr output ────────────────────────┐      │
-│  │  (textarea)                              │      │
-│  └──────────────────────────────────────────┘      │
-│  ┌─ ip rule output ────────────────────────┐      │
-│  │  (textarea)                              │      │
-│  └──────────────────────────────────────────┘      │
-│  ┌─ ip route output ───────────────────────┐      │
-│  │  (textarea)                              │      │
-│  └──────────────────────────────────────────┘      │
-│  ┌─ nft list ruleset ──────────────────────┐      │
-│  │  (textarea)                              │      │
-│  └──────────────────────────────────────────┘      │
-│  ┌─ iptables-save ─────────────────────────┐      │
-│  │  (textarea)                              │      │
-│  └──────────────────────────────────────────┘      │
-│  [Preview]  [Import to Project]                    │
-├───────────────────────────────────────────────────┤
-│  Validation Report                                 │
-│  ✓ OK: 12 items │ ⚠ Partial: 2 │ ✕ Skip: 1      │
-│  (상세 항목 리스트)                                 │
-└───────────────────────────────────────────────────┘
-```
-
-파일 업로드 또는 텍스트 직접 입력 지원.
+- 5개 textarea (ip addr, ip rule, ip route, nft list ruleset, iptables-save)
+- Preview → ValidationReport (parsed_ok/partial/unsupported)
+- Import to Project (replace/merge 전략)
 
 ---
 
-## 6. 컴포넌트 상세
+## 6. 캔버스 노드 타입
 
-### 6.1 Layout 컴포넌트
+### DeviceNode (장비 경계)
+- React Flow group 노드, 점선 사각형 경계
+- 헤더: 장비명 + 인터페이스/라우트/규칙 수 요약
+- 내부에 InterfaceNode, Local EndpointNode 포함 (parentId)
+- 크기: 내부 노드 수에 따라 동적 계산
 
-| 컴포넌트 | 역할 |
-|---------|------|
-| `AppShell` | 전체 레이아웃 프레임 (Header + Sidebar + Content) |
-| `Header` | 로고, breadcrumb, 테마 토글 |
-| `Sidebar` | 프로젝트 목록, 네비게이션 링크 |
+### InterfaceNode (네트워크 인터페이스)
+- 140px 너비, indigo 테마
+- 이름, IP 주소, MTU, 상태(UP/DN), 종류(veth, bridge 등)
+- parentId: DEVICE → 장비 내부, extent: parent
 
-### 6.2 Editor 컴포넌트
+### EndpointNode (엔드포인트)
+- 160px 너비, 역할별 색상 6종
+- Local roles (local_client/server/proxy/tproxy): parentId: DEVICE → 내부
+- Remote roles (remote_client/server): 외부 배치
 
-| 컴포넌트 | 역할 |
-|---------|------|
-| `PacketEditor` | 패킷 속성 폼 |
-| `InterfaceEditor` | 인터페이스 CRUD 테이블 |
-| `RoutingEditor` | 라우팅 테이블 관리 |
-| `PolicyRoutingEditor` | ip rule CRUD 테이블 |
-| `NftablesEditor` | nftables 규칙 계층 편집 |
-| `IptablesEditor` | iptables 규칙 편집 |
-| `XdpEditor` | XDP 프로그램 규칙 편집 |
-| `YamlEditor` | raw YAML 편집 (코드 에디터) |
-
-### 6.3 Trace 컴포넌트
-
-| 컴포넌트 | 역할 |
-|---------|------|
-| `TraceTimeline` | 단계별 수직 타임라인 |
-| `TraceStepCard` | 개별 단계 상세 카드 |
-| `PacketStateView` | before/after 상태 비교 |
-| `ExplainPanel` | 설명 패널 |
-
-### 6.4 Import 컴포넌트
-
-| 컴포넌트 | 역할 |
-|---------|------|
-| `ImportForm` | 명령어 출력 입력 폼 |
-| `ImportPreview` | 파싱 결과 미리보기 |
-| `ValidationReport` | 검증 결과 표시 |
+### FlowEdge (트래픽 플로우)
+- 애니메이션 화살표, 프로토콜 뱃지 + 플로우명 라벨
+- Endpoint 간 연결
 
 ---
 
-## 7. API 클라이언트
+## 7. 상태 관리
 
-`src/api/client.ts`에 fetch 기반 API 클라이언트를 구현한다.
+- `Scenario` 객체를 중앙 상태로 유지 (ScenarioEditorPage)
+- 구조화된 탭 → Scenario 업데이트 → YAML 자동 직렬화
+- YAML 편집 → 탭 전환 시 파싱 → Scenario 업데이트
+- 시뮬레이션 결과는 페이지 내 state로 관리 (다이얼로그/리플레이)
+- SimulationContext: 레거시 결과 페이지용 Context
+
+---
+
+## 8. API 클라이언트
 
 ```typescript
-const API_BASE = '/api/v1';
-
 export const api = {
   // Projects
-  listProjects: () => get('/projects'),
-  createProject: (data) => post('/projects', data),
-  getProject: (name) => get(`/projects/${name}`),
-  deleteProject: (name) => del(`/projects/${name}`),
-  cloneProject: (name) => post(`/projects/${name}/clone`),
-
+  listProjects, createProject, getProject, updateProject, deleteProject, cloneProject,
   // Scenario
-  getScenario: (name) => get(`/projects/${name}/scenario`),
-  saveScenario: (name, data) => put(`/projects/${name}/scenario`, data),
-  validateScenario: (name, data) => post(`/projects/${name}/scenario/validate`, data),
-
+  getScenario, getScenarioYaml, saveScenario, saveScenarioYaml, validateScenario,
   // Simulation
-  runSimulation: (name) => post(`/projects/${name}/simulate`),
-  getSimulation: (id) => get(`/simulations/${id}`),
-  getTrace: (id) => get(`/simulations/${id}/trace`),
-
+  runSimulation, getSimulation,
+  // Samples (내장, 파일시스템 미사용)
+  listSamples, getSample, simulateSample,
   // Import
-  parseImport: (data) => post('/import/parse', data),
-  previewImport: (data) => post('/import/preview', data),
-  applyImport: (name, data) => post(`/projects/${name}/import`, data),
+  parseImport, applyImport,
 };
 ```
 
 ---
 
-## 8. 커스텀 Hooks
+## 9. 의존성
 
-| Hook | 역할 |
-|------|------|
-| `useProject` | 프로젝트 CRUD, 시나리오 로드/저장 |
-| `useSimulation` | 시뮬레이션 실행, 결과 조회 |
-| `useImport` | import 파싱, 미리보기, 적용 |
+| 패키지 | 용도 |
+|--------|------|
+| `react` + `react-dom` | UI 프레임워크 |
+| `react-router-dom` | 클라이언트 라우팅 |
+| `@xyflow/react` | React Flow 캔버스 (노드/엣지 그래프) |
+| `@dagrejs/dagre` | 자동 레이아웃 알고리즘 |
+| `js-yaml` | YAML ↔ JSON 양방향 변환 |
+| `lucide-react` | 아이콘 |
+| `tailwindcss` | 유틸리티 CSS |
+| `clsx` + `tailwind-merge` | 조건부 클래스 병합 (`cn()`) |
+| `vite` | 빌드 도구 |
+| `typescript` | 타입 시스템 |
+
+패키지 매니저: **pnpm**

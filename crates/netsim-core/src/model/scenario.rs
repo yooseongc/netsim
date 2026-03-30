@@ -8,6 +8,8 @@ use super::policy_routing::IpRule;
 use super::routing::RoutingTable;
 use super::sysctl::SysctlConfig;
 use super::xdp::XdpConfig;
+use super::neighbor::NeighborEntry;
+use super::bridge_fdb::FdbEntry;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Scenario {
@@ -33,6 +35,12 @@ pub struct Scenario {
     /// 시뮬레이션 토폴로지 (엔드포인트 및 트래픽 흐름 정의)
     #[serde(default)]
     pub topology: Option<Topology>,
+    /// ARP/Neighbor 테이블 초기 상태 (`ip neigh show`)
+    #[serde(default)]
+    pub neighbors: Vec<NeighborEntry>,
+    /// Bridge FDB 정적 엔트리 (`bridge fdb show`)
+    #[serde(default)]
+    pub bridge_fdb: Vec<FdbEntry>,
 }
 
 fn default_version() -> String {

@@ -10,6 +10,8 @@ pub mod scenario;
 pub mod session;
 pub mod sysctl;
 pub mod endpoint;
+pub mod neighbor;
+pub mod bridge_fdb;
 
 // Re-exports
 pub use interface::*;
@@ -24,3 +26,5 @@ pub use scenario::*;
 pub use session::*;
 pub use sysctl::*;
 pub use endpoint::*;
+pub use neighbor::*;
+pub use bridge_fdb::*;

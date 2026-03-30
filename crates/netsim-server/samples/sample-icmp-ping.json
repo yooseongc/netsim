@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "name": "sample-icmp-ping",
+  "description": "ICMP Ping - Echo request (type 8) from remote host to local address. No firewall rules, packet should reach LOCAL_DELIVERY.",
+  "interfaces": [
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:0a:00:00:01",
+      "addresses": [
+        { "ip": "10.0.0.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "10.0.0.1/32", "dev": "eth0", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "10.0.0.0/24", "dev": "eth0", "scope": "link" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "packet": {
+    "ingress_interface": "eth0",
+    "src_mac": "02:00:0a:00:00:64",
+    "dst_mac": "02:00:0a:00:00:01",
+    "src_ip": "10.0.0.100",
+    "dst_ip": "10.0.0.1",
+    "protocol": "icmp",
+    "icmp_type": 8,
+    "icmp_code": 0,
+    "ttl": 64
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "Pinger", "ip": "10.0.0.100", "interface": "eth0" },
+      { "role": "local_server", "name": "Local Host", "ip": "10.0.0.1" }
+    ],
+    "flows": [
+      { "name": "ICMP Echo Request", "source": "Pinger", "destination": "Local Host", "protocol": "icmp", "description": "ICMP echo request (ping) to local address" }
+    ]
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "version": "1.0",
+  "name": "sample-tproxy",
+  "description": "Transparent proxy (TPROXY) - HTTP traffic is transparently redirected to local proxy at 127.0.0.1:3128 using TPROXY in mangle prerouting. Policy routing with fwmark ensures the packet is delivered locally.",
+  "interfaces": [
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:0a:00:00:01",
+      "addresses": [
+        { "ip": "10.0.0.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    },
+    {
+      "name": "lo",
+      "index": 1,
+      "mac": "00:00:00:00:00:00",
+      "addresses": [
+        { "ip": "127.0.0.1", "prefix_len": 8, "scope": "host" }
+      ],
+      "mtu": 65536,
+      "state": "up",
+      "kind": "loopback"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "10.0.0.1/32", "dev": "eth0", "scope": "host", "route_type": "local" },
+        { "destination": "127.0.0.1/32", "dev": "lo", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "10.0.0.0/24", "dev": "eth0", "scope": "link" },
+        { "destination": "0.0.0.0/0", "gateway": "10.0.0.254", "dev": "eth0" }
+      ]
+    },
+    {
+      "id": 100,
+      "name": "tproxy",
+      "routes": [
+        { "destination": "0.0.0.0/0", "dev": "lo", "scope": "host", "route_type": "local" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    {
+      "priority": 100,
+      "selector": { "fwmark": 1 },
+      "action": { "lookup": 100 }
+    },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "netfilter": {
+    "nftables": {
+      "tables": [
+        {
+          "family": "ip",
+          "name": "mangle",
+          "chains": [
+            {
+              "name": "prerouting",
+              "chain_type": "mangle",
+              "hook": "prerouting",
+              "priority": -150,
+              "policy": "accept",
+              "rules": [
+                {
+                  "matches": [
+                    { "type": "transport", "protocol": "tcp", "field": "dport", "op": "eq", "value": "80" }
+                  ],
+                  "action": { "type": "nat", "action": { "type": "tproxy", "addr": "127.0.0.1", "port": 3128, "mark": 1 } },
+                  "comment": "TPROXY HTTP traffic to local proxy"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "sysctl": {
+    "ipv4": { "ip_forward": true },
+    "interface_conf": {
+      "eth0": {
+        "route_localnet": true,
+        "rp_filter": "off"
+      }
+    }
+  },
+  "packet": {
+    "ingress_interface": "eth0",
+    "src_mac": "02:00:0a:00:00:64",
+    "dst_mac": "02:00:0a:00:00:01",
+    "src_ip": "10.0.0.100",
+    "dst_ip": "93.184.216.34",
+    "protocol": "tcp",
+    "src_port": 43000,
+    "dst_port": 80,
+    "tcp_flags": { "syn": true },
+    "ttl": 64
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "Client", "ip": "10.0.0.100", "port": 43000, "interface": "eth0" },
+      { "role": "local_t_proxy", "name": "Squid Proxy", "ip": "127.0.0.1", "port": 3128 }
+    ],
+    "flows": [
+      { "name": "Transparent Proxy", "source": "Client", "destination": "Squid Proxy", "protocol": "tcp", "description": "HTTP traffic transparently redirected to local proxy via TPROXY" }
+    ]
+  }
+}

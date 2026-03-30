@@ -362,6 +362,8 @@ export interface Scenario {
   sysctl?: SysctlConfig;
   packet: PacketDef;
   topology?: Topology | null;
+  neighbors?: NeighborEntry[];
+  bridge_fdb?: FdbEntry[];
 }
 
 // --- Endpoint Role Model ---
@@ -380,6 +382,7 @@ export interface Endpoint {
   ip: string;
   port?: number | null;
   interface?: string | null;
+  position?: { x: number; y: number } | null;
 }
 
 export interface TrafficFlow {
@@ -393,6 +396,7 @@ export interface TrafficFlow {
 export interface Topology {
   endpoints?: Endpoint[];
   flows?: TrafficFlow[];
+  node_positions?: Record<string, { x: number; y: number }>;
 }
 
 // --- Validation (frontend-only) ---
@@ -401,4 +405,49 @@ export interface ValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
+}
+
+// --- Neighbor / ARP Table ---
+
+export type NeighborState = 'permanent' | 'reachable' | 'stale' | 'delay' | 'probe' | 'failed' | 'incomplete';
+
+export interface NeighborEntry {
+  ip: string;
+  mac: string;
+  interface: string;
+  state?: NeighborState;
+}
+
+// --- Bridge FDB ---
+
+export interface FdbEntry {
+  mac: string;
+  port: string;
+  vlan?: number | null;
+  is_static?: boolean;
+}
+
+// --- Import ---
+
+export interface ImportParseRequest {
+  ip_addr?: string | null;
+  ip_rule?: string | null;
+  ip_route?: string | null;
+  nft_list_ruleset?: string | null;
+  iptables_save?: string | null;
+}
+
+export interface ImportApplyRequest extends ImportParseRequest {
+  merge_strategy?: 'replace' | 'merge';
+}
+
+export interface ImportValidationReport {
+  parsed_ok: string[];
+  partial: string[];
+  unsupported: string[];
+}
+
+export interface ImportResponse {
+  scenario: Partial<Scenario>;
+  validation: ImportValidationReport;
 }

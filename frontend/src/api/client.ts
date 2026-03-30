@@ -1,5 +1,5 @@
 import type { ProjectMeta, ProjectListResponse, CreateProjectRequest, UpdateProjectRequest, CloneProjectRequest } from '@/types/project';
-import type { Scenario, ValidationResult } from '@/types/scenario';
+import type { Scenario, ValidationResult, ImportParseRequest, ImportApplyRequest, ImportResponse } from '@/types/scenario';
 import type { SimulationResponse, SimulationResult } from '@/types/trace';
 
 const API_BASE = '/api/v1';
@@ -109,11 +109,16 @@ export const api = {
     }),
   getSimulation: (id: string) => get<SimulationResult>(`/simulations/${id}`),
 
+  // Samples
+  listSamples: () => get<{ samples: { name: string; description: string }[] }>('/samples'),
+  getSample: (name: string) => get<Scenario>(`/samples/${encodeURIComponent(name)}`),
+  simulateSample: (name: string) => post<SimulationResult>(`/samples/${encodeURIComponent(name)}/simulate`),
+
   // Import
-  parseImport: (data: Record<string, string | null>) =>
-    post<unknown>('/import/parse', data),
-  applyImport: (name: string, data: Record<string, unknown>) =>
-    post<unknown>(`/projects/${encodeURIComponent(name)}/import`, data),
+  parseImport: (data: ImportParseRequest) =>
+    post<ImportResponse>('/import/parse', data),
+  applyImport: (name: string, data: ImportApplyRequest) =>
+    post<ImportResponse>(`/projects/${encodeURIComponent(name)}/import`, data),
 };
 
 export { ApiError };

@@ -66,7 +66,10 @@ export type PipelineStage =
   | 'br_nf_forward'
   | 'br_nf_postrouting'
   | 'loopback_delivery'
-  | 'reroute';
+  | 'reroute'
+  | 'bridge_fdb_lookup'
+  | 'arp_resolve'
+  | 'l2_rewrite';
 
 export interface PacketState {
   ethertype: string;

@@ -12,7 +12,7 @@ export function SimulationResultPage() {
 
   if (!result) {
     return (
-      <div className="max-w-4xl mx-auto text-center py-12">
+      <div className="max-w-4xl mx-auto p-6 text-center py-12">
         <p className="text-gray-500 mb-4">No simulation result available.</p>
         <button
           onClick={() => navigate(`/projects/${encodeURIComponent(projectName)}`)}
@@ -28,7 +28,7 @@ export function SimulationResultPage() {
   const { summary, trace, verdict } = result;
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto p-6 h-full overflow-y-auto">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <button

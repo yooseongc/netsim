@@ -1,0 +1,81 @@
+{
+  "version": "1.0",
+  "name": "sample-bridge-forward",
+  "description": "Bridge L2 forwarding - Packet is forwarded between bridge member interfaces eth0 and eth1 via br0. No iptables called on bridge path.",
+  "interfaces": [
+    {
+      "name": "br0",
+      "index": 4,
+      "mac": "02:00:0a:00:00:01",
+      "addresses": [
+        { "ip": "10.0.0.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "bridge",
+      "bridge_members": ["eth0", "eth1"]
+    },
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:00:00:02:01",
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical",
+      "master": "br0"
+    },
+    {
+      "name": "eth1",
+      "index": 3,
+      "mac": "02:00:00:00:03:01",
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical",
+      "master": "br0"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "10.0.0.1/32", "dev": "br0", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "10.0.0.0/24", "dev": "br0", "scope": "link" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "sysctl": {
+    "bridge_nf_call_iptables": false
+  },
+  "packet": {
+    "ingress_interface": "eth0",
+    "src_ip": "10.0.0.100",
+    "dst_ip": "10.0.0.200",
+    "protocol": "tcp",
+    "src_port": 50000,
+    "dst_port": 80,
+    "tcp_flags": { "syn": true },
+    "ttl": 64,
+    "src_mac": "02:00:0a:00:00:64",
+    "dst_mac": "02:00:0a:00:00:c8"
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "Host A", "ip": "10.0.0.100", "port": 50000, "interface": "eth0" },
+      { "role": "remote_server", "name": "Host B", "ip": "10.0.0.200", "port": 80, "interface": "eth1" }
+    ],
+    "flows": [
+      { "name": "Bridge Forward", "source": "Host A", "destination": "Host B", "protocol": "tcp", "description": "L2 forwarding between bridge member ports" }
+    ]
+  }
+}

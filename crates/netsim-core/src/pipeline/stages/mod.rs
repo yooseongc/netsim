@@ -3,3 +3,4 @@ pub mod bridge;
 pub mod arp;
 pub mod sysctl_checks;
 pub mod mtu_check;
+pub mod l2_rewrite;

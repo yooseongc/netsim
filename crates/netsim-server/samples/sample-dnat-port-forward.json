@@ -1,0 +1,113 @@
+{
+  "version": "1.0",
+  "name": "sample-dnat-port-forward",
+  "description": "DNAT port forwarding - External request to WAN IP port 80 is redirected via DNAT to internal server 192.168.1.100:8080.",
+  "interfaces": [
+    {
+      "name": "eth0",
+      "index": 2,
+      "mac": "02:00:cb:00:71:01",
+      "addresses": [
+        { "ip": "203.0.113.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    },
+    {
+      "name": "eth1",
+      "index": 3,
+      "mac": "02:00:c0:a8:01:01",
+      "addresses": [
+        { "ip": "192.168.1.1", "prefix_len": 24, "scope": "global" }
+      ],
+      "mtu": 1500,
+      "state": "up",
+      "kind": "physical"
+    }
+  ],
+  "routing_tables": [
+    {
+      "id": 255,
+      "name": "local",
+      "routes": [
+        { "destination": "203.0.113.1/32", "dev": "eth0", "scope": "host", "route_type": "local" },
+        { "destination": "192.168.1.1/32", "dev": "eth1", "scope": "host", "route_type": "local" }
+      ]
+    },
+    {
+      "id": 254,
+      "name": "main",
+      "routes": [
+        { "destination": "203.0.113.0/24", "dev": "eth0", "scope": "link" },
+        { "destination": "192.168.1.0/24", "dev": "eth1", "scope": "link" },
+        { "destination": "0.0.0.0/0", "gateway": "203.0.113.254", "dev": "eth0" }
+      ]
+    }
+  ],
+  "ip_rules": [
+    { "priority": 0, "action": { "lookup": 255 } },
+    { "priority": 32766, "action": { "lookup": 254 } }
+  ],
+  "netfilter": {
+    "nftables": {
+      "tables": [
+        {
+          "family": "ip",
+          "name": "nat",
+          "chains": [
+            {
+              "name": "prerouting",
+              "chain_type": "nat",
+              "hook": "prerouting",
+              "priority": -100,
+              "policy": "accept",
+              "rules": [
+                {
+                  "matches": [
+                    { "type": "iif", "name": "eth0" },
+                    { "type": "transport", "protocol": "tcp", "field": "dport", "op": "eq", "value": "80" }
+                  ],
+                  "action": { "type": "nat", "action": { "type": "dnat", "addr": "192.168.1.100", "port": 8080 } },
+                  "comment": "DNAT external :80 to internal :8080"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "neighbors": [
+    {
+      "ip": "192.168.1.100",
+      "mac": "02:00:c0:a8:01:64",
+      "interface": "eth1",
+      "state": "permanent"
+    }
+  ],
+  "sysctl": {
+    "ipv4": { "ip_forward": true }
+  },
+  "packet": {
+    "ingress_interface": "eth0",
+    "src_mac": "02:00:c6:33:64:32",
+    "dst_mac": "02:00:cb:00:71:01",
+    "src_ip": "198.51.100.50",
+    "dst_ip": "203.0.113.1",
+    "protocol": "tcp",
+    "src_port": 52000,
+    "dst_port": 80,
+    "tcp_flags": { "syn": true },
+    "ttl": 64
+  },
+  "topology": {
+    "endpoints": [
+      { "role": "remote_client", "name": "External Client", "ip": "198.51.100.50", "port": 52000, "interface": "eth0" },
+      { "role": "remote_server", "name": "Internal Server", "ip": "192.168.1.100", "port": 8080, "interface": "eth1" }
+    ],
+    "flows": [
+      { "name": "DNAT Port Forward", "source": "External Client", "destination": "Internal Server", "protocol": "tcp", "description": "TCP :80 on WAN → DNAT to 192.168.1.100:8080 on LAN" }
+    ]
+  }
+}

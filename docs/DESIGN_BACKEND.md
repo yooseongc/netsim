@@ -21,7 +21,7 @@ netsim/
 │   │   │   ├── engine.rs             # 시뮬레이션 오케스트레이터 (~596줄, run + run_output)
 │   │   │   ├── session_engine.rs     # 세션 단위 시뮬레이션 (TCP handshake, ICMP, UDP)
 │   │   │   ├── flow.rs               # TrafficFlow → SimulationRun 확장
-│   │   │   ├── trace.rs              # SimulationResult, TraceStep, FinalVerdict(9), PipelineStage(22), StageDecision(8)
+│   │   │   ├── trace.rs              # SimulationResult, TraceStep, FinalVerdict(9), PipelineStage(25), StageDecision(8)
 │   │   │   ├── matcher.rs            # 공유 룰 매칭 로직 (NfMatch 평가, 26개 단위 테스트)
 │   │   │   ├── error.rs              # 에러 타입
 │   │   │   ├── model/                # IR 데이터 모델 (13개 파일)
@@ -37,6 +37,8 @@ netsim/
 │   │   │   │   ├── conntrack.rs     # ConntrackState, ConntrackEntry, NatTuple, DnatMapping, SnatMapping
 │   │   │   │   ├── sysctl.rs        # SysctlConfig, Ipv4Sysctl, Ipv6Sysctl, InterfaceSysctl, RpFilterMode
 │   │   │   │   ├── endpoint.rs      # EndpointRole, Endpoint, TrafficFlow, Topology
+│   │   │   │   ├── neighbor.rs     # NeighborEntry, NeighborState (ARP/neighbor 테이블)
+│   │   │   │   ├── bridge_fdb.rs   # FdbEntry (Bridge Forwarding Database)
 │   │   │   │   └── session.rs       # SessionDef, SessionType, SessionEndpoint, SessionPacket, PacketDirection
 │   │   │   └── pipeline/            # 시뮬레이션 파이프라인
 │   │   │       ├── mod.rs           # StageResult + re-exports (OrderedChain, chain_eval::*, nat::*)
@@ -54,11 +56,12 @@ netsim/
 │   │   │           ├── mod.rs
 │   │   │           ├── interface_check.rs  # ingress 인터페이스 존재/상태 검증
 │   │   │           ├── bridge.rs           # 브릿지 멤버 검사, br_nf_call_iptables 파이프라인
-│   │   │           ├── arp.rs              # ARP 처리 (arp_ignore)
+│   │   │           ├── arp.rs              # ARP 처리 (arp_ignore + ARP 해석/시뮬레이션)
+│   │   │           ├── l2_rewrite.rs       # L2 헤더 재작성 (src_mac/dst_mac)
 │   │   │           ├── sysctl_checks.rs    # rp_filter, route_localnet, ip_forward, icmp_echo_ignore, egress 인터페이스 검증
 │   │   │           └── mtu_check.rs        # MTU 검사 (DF flag)
 │   │   └── tests/
-│   │       ├── integration_test.rs  # 통합 테스트 (48개)
+│   │       ├── integration_test.rs  # 통합 테스트 (66개, FDB/ARP/L2 포함)
 │   │       └── session_test.rs      # 세션 테스트 (6개)
 │   ├── netsim-parser/               # 시스템 설정 파서
 │   │   └── src/

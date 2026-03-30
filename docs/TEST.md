@@ -5,10 +5,10 @@
 | 카테고리 | 파일 | 테스트 수 | 상태 |
 |---------|------|----------|------|
 | matcher 단위 테스트 | `netsim-core/src/matcher.rs` | 26 | 완료 |
-| 통합 테스트 | `netsim-core/tests/integration_test.rs` | 48 | 완료 |
+| 통합 테스트 | `netsim-core/tests/integration_test.rs` | 66 | 완료 |
 | 세션 테스트 | `netsim-core/tests/session_test.rs` | 6 | 완료 |
 | 파서 테스트 | `netsim-parser/src/*.rs` | 46 | 완료 |
-| **합계** | | **126** | |
+| **합계** | | **144** | |
 
 ---
 
@@ -105,6 +105,24 @@ NfMatch 조건별 매칭 로직을 검증한다.
 | 46 | `test_conntrack_nat_established` | established 패킷 conntrack NAT tuple 자동 적용 |
 | 47 | `test_loopback_delivery` | OUTPUT → 라우팅 결과 LOCAL → loopback → INPUT → LOCAL_DELIVERY |
 | 48 | `test_flow_remote_to_local` | TrafficFlow 확장 (Remote → Local) |
+| 49 | `test_ipv6_forwarding` | IPv6 패킷 포워딩 |
+| 50 | `test_sctp_port_nat` | SCTP 포트 NAT |
+| 51 | `test_xdp_redirect` | XDP REDIRECT |
+| 52 | `test_ct_mark_propagation` | conntrack mark 전파 |
+| 53 | `test_gre_protocol` | GRE 프로토콜 로컬 전달 |
+| 54 | `test_fwmark_match` | fwmark 기반 매칭 |
+| 55 | `test_jump_chain` | chain jump/goto 동작 |
+| 56 | `test_log_action` | log 액션 (continue) |
+| 57 | `test_fdb_static_entry_lookup` | Bridge FDB 정적 엔트리 조회 → 포트 선택 |
+| 58 | `test_fdb_dynamic_learning` | Bridge FDB source MAC 동적 학습 |
+| 59 | `test_fdb_unknown_mac_flooding` | Bridge FDB 미스 → flooding |
+| 60 | `test_arp_table_hit` | ARP 테이블 히트 → dst_mac 설정 |
+| 61 | `test_arp_miss_resolved_by_interface` | ARP 미스 → 인터페이스 IP로 해석 |
+| 62 | `test_arp_miss_no_responder_drop` | ARP 미스 + 응답자 없음 → Drop |
+| 63 | `test_l2_header_rewrite_on_forward` | 포워딩 시 L2 헤더 재작성 (src_mac/dst_mac) |
+| 64 | `test_proxy_arp` | proxy_arp 동작 검증 |
+| 65 | `test_arp_filter_normal_forwarding` | arp_filter=true 정상 포워딩 |
+| 66 | `test_arp_announce_trace` | arp_announce=2 트레이스 검증 |
 
 ---
 
@@ -212,7 +230,7 @@ NfMatch 조건별 매칭 로직을 검증한다.
 cargo test
 
 # crate별 실행
-cargo test -p netsim-core          # 엔진: matcher 26 + integration 48 + session 6 = 80
+cargo test -p netsim-core          # 엔진: matcher 26 + integration 66 + session 6 = 98
 cargo test -p netsim-parser        # 파서: 46
 cargo test -p netsim-server        # 서버: (현재 테스트 없음)
 

@@ -105,6 +105,12 @@ pub enum PipelineStage {
     BrNfPostrouting,
     /// Loopback delivery (output to local address)
     LoopbackDelivery,
+    /// Bridge FDB lookup (MAC learning + port selection)
+    BridgeFdbLookup,
+    /// ARP/Neighbor resolution (L3 → L2 MAC lookup before egress)
+    ArpResolve,
+    /// L2 header rewriting (src_mac/dst_mac update on forwarding)
+    L2Rewrite,
 }
 
 impl std::fmt::Display for PipelineStage {
@@ -132,6 +138,9 @@ impl std::fmt::Display for PipelineStage {
             PipelineStage::BrNfForward => write!(f, "BR_NF_FORWARD"),
             PipelineStage::BrNfPostrouting => write!(f, "BR_NF_POSTROUTING"),
             PipelineStage::LoopbackDelivery => write!(f, "LOOPBACK_DELIVERY"),
+            PipelineStage::BridgeFdbLookup => write!(f, "BRIDGE_FDB_LOOKUP"),
+            PipelineStage::ArpResolve => write!(f, "ARP_RESOLVE"),
+            PipelineStage::L2Rewrite => write!(f, "L2_REWRITE"),
         }
     }
 }

@@ -22,7 +22,10 @@ index.html fallback으로 SPA 라우팅을 지원한다.
 ├── /simulations/{id}              (GET)
 ├── /simulations/{id}/trace        (GET)
 ├── /import/parse                  (POST)
-└── /import/preview                (POST)
+├── /import/preview                (POST)
+├── /samples                       (GET)
+├── /samples/{name}                (GET)
+└── /samples/{name}/simulate       (POST)
 ```
 
 미들웨어: `CorsLayer::permissive()`, `TraceLayer`.
@@ -151,7 +154,13 @@ index.html fallback으로 SPA 라우팅을 지원한다.
   "xdp": { "programs": [] },
   "sysctl": { "ipv4": {...}, "ipv6": {...}, "interface_conf": {}, ... },
   "packet": {...},
-  "topology": null
+  "topology": null,
+  "neighbors": [
+    { "ip": "10.0.0.1", "mac": "02:00:0a:00:00:01", "interface": "eth0", "state": "permanent" }
+  ],
+  "bridge_fdb": [
+    { "mac": "aa:bb:cc:dd:ee:ff", "port": "eth1", "is_static": true }
+  ]
 }
 ```
 
@@ -417,7 +426,56 @@ index.html fallback으로 SPA 라우팅을 지원한다.
 
 ---
 
-## 6. Health
+## 6. Samples (내장)
+
+바이너리에 내장된 샘플 시나리오. 파일시스템 저장 없이 메모리에서 직접 제공.
+
+### GET /api/v1/samples
+
+**Response 200:**
+```json
+{
+  "samples": [
+    { "name": "sample-basic-forward", "description": "Basic packet forwarding..." },
+    { "name": "sample-dnat-port-forward", "description": "DNAT port forwarding..." }
+  ]
+}
+```
+
+### GET /api/v1/samples/{name}
+
+샘플 시나리오 조회. 응답은 `Scenario` 객체.
+
+**Response 200:** `Scenario` JSON.
+**Error 404:** 샘플 미존재.
+
+### POST /api/v1/samples/{name}/simulate
+
+샘플 시나리오로 즉시 시뮬레이션 실행. Request body 불필요.
+
+**Response 200:** `SimulationResult` JSON.
+**Error 404:** 샘플 미존재.
+
+### 내장 샘플 목록 (12개)
+
+| 이름 | 설명 | 예상 Verdict |
+|------|------|-------------|
+| sample-basic-forward | 기본 패킷 포워딩 (ip_forward) | forwarded |
+| sample-dnat-port-forward | DNAT :80→192.168.1.100:8080 | forwarded |
+| sample-snat-masquerade | 내부→외부 마스커레이드 NAT | forwarded |
+| sample-firewall-drop | nftables DROP (SSH만 허용) | drop |
+| sample-icmp-ping | ICMP echo request 로컬 수신 | local_delivery |
+| sample-policy-routing | fwmark 기반 정책 라우팅 | forwarded |
+| sample-xdp-filter | XDP에서 특정 IP 차단 | drop |
+| sample-bridge-forward | 브릿지 L2 포워딩 | forwarded |
+| sample-local-delivery | TCP 로컬 주소 수신 | local_delivery |
+| sample-ttl-exceeded | TTL=1 패킷 폐기 | drop |
+| sample-mtu-exceeded | DF+4000B 패킷 MTU 초과 | drop |
+| sample-tproxy | 투명 프록시 TPROXY | local_delivery |
+
+---
+
+## 7. Health
 
 ### GET /api/v1/health
 
@@ -433,7 +491,7 @@ index.html fallback으로 SPA 라우팅을 지원한다.
 
 ---
 
-## 7. 정적 파일 서빙
+## 8. 정적 파일 서빙
 
 환경변수 `NETSIM_STATIC_DIR`이 설정되면, 해당 디렉토리를 fallback 서비스로 마운트한다.
 - `/api/v1/*` 이외의 모든 경로에서 정적 파일을 서빙
@@ -441,7 +499,7 @@ index.html fallback으로 SPA 라우팅을 지원한다.
 
 ---
 
-## 8. 공통 에러 형식
+## 9. 공통 에러 형식
 
 ```json
 {
@@ -461,7 +519,7 @@ index.html fallback으로 SPA 라우팅을 지원한다.
 
 ---
 
-## 9. 저장소 구조
+## 10. 저장소 구조
 
 ```
 {data_dir}/

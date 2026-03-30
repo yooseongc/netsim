@@ -198,6 +198,9 @@ fn build_scenario_from_partial(
         netfilter: partial.netfilter,
         xdp: Default::default(),
         sysctl: Default::default(),
+        topology: None,
+        neighbors: vec![],
+        bridge_fdb: vec![],
         packet: PacketDef {
             ingress_interface: ingress,
             ethertype: Default::default(),

@@ -52,6 +52,10 @@ frontend/
     │   │   ├── TraceStepCard.tsx
     │   │   ├── PacketStateView.tsx
     │   │   └── ExplainPanel.tsx
+    │   ├── topology/
+    │   │   ├── TopologyEditor.tsx    # 엔드포인트/트래픽 플로우 시각 편집기
+    │   │   ├── EndpointForm.tsx       # 엔드포인트 추가/편집 모달
+    │   │   └── FlowForm.tsx           # 트래픽 플로우 추가/편집 모달
     │   └── import/
     │       ├── ImportForm.tsx
     │       ├── ImportPreview.tsx

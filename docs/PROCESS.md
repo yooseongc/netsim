@@ -93,6 +93,13 @@
   - SimulationResultPage (Summary 카드 + Pipeline Flow 타임라인)
   - Trace 시각화 컴포넌트 (PipelineFlow, TraceStepCard, StateDiffView, VerdictBadge)
   - AppShell 레이아웃 (Header + Sidebar + 라우팅)
+- [x] Topology/Flow 편집 UI 구현
+  - TopologyEditor 컴포넌트 (엔드포인트 카드 그리드 + 트래픽 플로우 목록)
+  - EndpointForm 모달 (이름, 역할, IP, 포트, 인터페이스 편집)
+  - FlowForm 모달 (이름, 소스/대상 엔드포인트 선택, 프로토콜)
+  - ScenarioEditorPage에 YAML/Topology 탭 전환 추가
+  - js-yaml 의존성 추가 (YAML ↔ Topology 양방향 동기화)
+  - 역할별 아이콘(Lucide) 및 색상 배지 적용
   - SimulationContext (결과 전달용 React Context)
   - lucide-react 아이콘 추가
   - pnpm build 통과 확인

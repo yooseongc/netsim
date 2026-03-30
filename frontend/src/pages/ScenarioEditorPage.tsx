@@ -3,6 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Save, Play, ArrowLeft } from 'lucide-react';
 import { api } from '@/api/client';
 import { useSimulationResult } from '@/contexts/SimulationContext';
+import { cn } from '@/lib/utils';
+import { TopologyEditor } from '@/components/topology/TopologyEditor';
+import type { Topology, Scenario } from '@/types/scenario';
+import jsYaml from 'js-yaml';
+
+type EditorTab = 'yaml' | 'topology';
 
 export function ScenarioEditorPage() {
   const { name } = useParams<{ name: string }>();
@@ -15,8 +21,51 @@ export function ScenarioEditorPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<EditorTab>('yaml');
+  const [topology, setTopology] = useState<Topology>({ endpoints: [], flows: [] });
 
   const projectName = name ?? '';
+
+  // Parse topology from YAML when switching to topology tab or on load
+  const syncTopologyFromYaml = useCallback((yamlText: string) => {
+    try {
+      const parsed = jsYaml.load(yamlText) as Scenario | null;
+      if (parsed?.topology) {
+        setTopology({
+          endpoints: parsed.topology.endpoints ?? [],
+          flows: parsed.topology.flows ?? [],
+        });
+      } else {
+        setTopology({ endpoints: [], flows: [] });
+      }
+    } catch {
+      // YAML parse error -- keep existing topology state
+    }
+  }, []);
+
+  // Merge topology back into YAML
+  const syncYamlFromTopology = useCallback((topo: Topology) => {
+    try {
+      const parsed = (jsYaml.load(yaml) as Record<string, unknown>) ?? {};
+      parsed.topology = {
+        endpoints: topo.endpoints ?? [],
+        flows: topo.flows ?? [],
+      };
+      const newYaml = jsYaml.dump(parsed, { lineWidth: 120, noRefs: true });
+      setYaml(newYaml);
+    } catch {
+      // If YAML is invalid, create a minimal doc with topology
+      const doc: Record<string, unknown> = {
+        version: '1.0',
+        name: projectName,
+        topology: {
+          endpoints: topo.endpoints ?? [],
+          flows: topo.flows ?? [],
+        },
+      };
+      setYaml(jsYaml.dump(doc, { lineWidth: 120, noRefs: true }));
+    }
+  }, [yaml, projectName]);
 
   const loadScenario = useCallback(async () => {
     setLoading(true);
@@ -24,17 +73,30 @@ export function ScenarioEditorPage() {
     try {
       const text = await api.getScenarioYaml(projectName);
       setYaml(text);
+      syncTopologyFromYaml(text);
     } catch {
-      // 404 means no scenario yet — start with empty
+      // 404 means no scenario yet -- start with empty
       setYaml('');
     } finally {
       setLoading(false);
     }
-  }, [projectName]);
+  }, [projectName, syncTopologyFromYaml]);
 
   useEffect(() => {
     void loadScenario();
   }, [loadScenario]);
+
+  const handleTabChange = (tab: EditorTab) => {
+    if (tab === 'topology' && activeTab === 'yaml') {
+      syncTopologyFromYaml(yaml);
+    }
+    setActiveTab(tab);
+  };
+
+  const handleTopologyChange = (topo: Topology) => {
+    setTopology(topo);
+    syncYamlFromTopology(topo);
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -96,12 +158,38 @@ export function ScenarioEditorPage() {
         </div>
       )}
 
+      {/* Tab bar */}
+      <div className="mb-3 flex border-b border-gray-200">
+        <button
+          onClick={() => handleTabChange('yaml')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px',
+            activeTab === 'yaml'
+              ? 'border-gray-900 text-gray-900'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+          )}
+        >
+          YAML
+        </button>
+        <button
+          onClick={() => handleTabChange('topology')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px',
+            activeTab === 'topology'
+              ? 'border-gray-900 text-gray-900'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+          )}
+        >
+          Topology
+        </button>
+      </div>
+
       {/* Editor area */}
       {loading ? (
         <div className="flex-1 flex items-center justify-center text-gray-400">
           Loading scenario...
         </div>
-      ) : (
+      ) : activeTab === 'yaml' ? (
         <div className="flex-1 flex flex-col min-h-0">
           <div className="text-xs text-gray-500 mb-2">
             Edit the scenario as YAML. Define interfaces, routing tables, netfilter rules, and the packet to simulate.
@@ -139,6 +227,13 @@ packet:
   src_port: 54321
   dst_port: 80`}
             spellCheck={false}
+          />
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <TopologyEditor
+            topology={topology}
+            onChange={handleTopologyChange}
           />
         </div>
       )}

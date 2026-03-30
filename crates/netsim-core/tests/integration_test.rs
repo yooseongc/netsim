@@ -3197,6 +3197,413 @@ fn test_loopback_delivery() {
 }
 
 // ============================================================
+// ============================================================
+// OUTPUT 경로 테스트
+// ============================================================
+
+#[test]
+fn test_output_basic_send() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "output-send".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "lo".to_string(),
+            src_ip: Some("10.0.0.1".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run_output(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Sent);
+    assert!(result.trace.iter().any(|s| matches!(s.stage, PipelineStage::Output)));
+}
+
+#[test]
+fn test_output_with_snat() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "postrouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Postrouting),
+                    priority: Some(100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None,
+                        comment: None,
+                        matches: vec![NfMatch::Oif { name: "eth0".to_string() }],
+                        action: NfAction::Nat { action: NatAction::Masquerade { port: None } },
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "output-snat".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter,
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "lo".to_string(),
+            src_ip: Some("192.168.1.100".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Udp,
+            src_port: Some(12345),
+            dst_port: Some(53),
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run_output(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Sent);
+    let last_state = &result.trace.last().unwrap().state_after;
+    assert!(last_state.snat_applied);
+}
+
+#[test]
+fn test_output_mtu_exceeded() {
+    let (rules, tables) = default_routing();
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "output-mtu".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: tables,
+        ip_rules: rules,
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "lo".to_string(),
+            src_ip: Some("10.0.0.1".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321),
+            dst_port: Some(80),
+            packet_length: Some(2000),
+            df_flag: true,
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run_output(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+    assert!(result.trace.iter().any(|s| matches!(s.stage, PipelineStage::MtuCheck)));
+}
+
+// ============================================================
+// IPv6 테스트 추가
+// ============================================================
+
+#[test]
+fn test_ipv6_forwarding() {
+    let interfaces = vec![
+        Interface {
+            name: "eth0".to_string(),
+            index: 2,
+            mac: None,
+            addresses: vec![
+                InterfaceAddress { ip: "fd00::1".parse().unwrap(), prefix_len: 64, scope: AddressScope::Global },
+            ],
+            mtu: 1500, state: InterfaceState::Up, kind: InterfaceKind::Physical,
+            veth_peer: None, bridge_members: vec![], master: None, vlan_parent: None, vlan_id: None, bond_members: vec![],
+        },
+        Interface {
+            name: "eth1".to_string(),
+            index: 3,
+            mac: None,
+            addresses: vec![
+                InterfaceAddress { ip: "fd01::1".parse().unwrap(), prefix_len: 64, scope: AddressScope::Global },
+            ],
+            mtu: 1500, state: InterfaceState::Up, kind: InterfaceKind::Physical,
+            veth_peer: None, bridge_members: vec![], master: None, vlan_parent: None, vlan_id: None, bond_members: vec![],
+        },
+    ];
+    let rules = vec![
+        IpRule { priority: 0, selector: RuleSelector::default(), action: RuleAction::Lookup(254) },
+    ];
+    let tables = vec![RoutingTable {
+        id: 254, name: Some("main".to_string()),
+        routes: vec![
+            Route { destination: "fd00::/64".parse().unwrap(), dev: Some("eth0".to_string()), scope: RouteScope::Link, ..default_route() },
+            Route { destination: "fd01::/64".parse().unwrap(), dev: Some("eth1".to_string()), scope: RouteScope::Link, ..default_route() },
+        ],
+    }];
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "ipv6-fwd".to_string(),
+        description: None,
+        interfaces, routing_tables: tables, ip_rules: rules,
+        netfilter: empty_netfilter(), xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(), topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            ethertype: EtherType::Ipv6,
+            src_ip: Some("fd00::100".parse().unwrap()),
+            dst_ip: Some("fd01::100".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321), dst_port: Some(80),
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+    assert_eq!(result.summary.egress_interface.as_deref(), Some("eth1"));
+}
+
+// ============================================================
+// Jump/Goto 커스텀 체인 테스트
+// ============================================================
+
+#[test]
+fn test_nftables_jump_chain() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "filter".to_string(),
+                chains: vec![
+                    // Base chain with jump to user chain
+                    NfChain {
+                        name: "input".to_string(),
+                        chain_type: Some(NfChainType::Filter),
+                        hook: Some(NfHook::Input),
+                        priority: Some(0),
+                        policy: Some(NfVerdict::Drop),
+                        rules: vec![NfRule {
+                            handle: None, comment: None,
+                            matches: vec![],
+                            action: NfAction::Jump { target: "allowed".to_string() },
+                        }],
+                    },
+                    // User chain (no hook)
+                    NfChain {
+                        name: "allowed".to_string(),
+                        chain_type: None, hook: None, priority: None,
+                        policy: None,
+                        rules: vec![NfRule {
+                            handle: None, comment: None,
+                            matches: vec![NfMatch::Transport {
+                                protocol: TransportProto::Tcp,
+                                field: TransportField::Dport,
+                                op: MatchOp::Eq,
+                                value: "80".to_string(),
+                            }],
+                            action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                        }],
+                    },
+                ],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "jump-chain".to_string(),
+        description: None,
+        interfaces: default_interfaces(), routing_tables: tables, ip_rules: rules,
+        netfilter, xdp: XdpConfig::default(), sysctl: SysctlConfig::default(), topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321), dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // Jump to "allowed" chain → tcp dport 80 accept
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+#[test]
+fn test_nftables_jump_chain_no_match_returns() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip,
+                name: "filter".to_string(),
+                chains: vec![
+                    NfChain {
+                        name: "input".to_string(),
+                        chain_type: Some(NfChainType::Filter),
+                        hook: Some(NfHook::Input),
+                        priority: Some(0),
+                        policy: Some(NfVerdict::Accept), // policy accept
+                        rules: vec![
+                            NfRule {
+                                handle: None, comment: None,
+                                matches: vec![],
+                                action: NfAction::Jump { target: "check".to_string() },
+                            },
+                            // After return from "check", this rule runs
+                            NfRule {
+                                handle: None, comment: None,
+                                matches: vec![],
+                                action: NfAction::Verdict { verdict: NfVerdict::Accept },
+                            },
+                        ],
+                    },
+                    NfChain {
+                        name: "check".to_string(),
+                        chain_type: None, hook: None, priority: None, policy: None,
+                        rules: vec![
+                            // Only matches port 22, our packet is port 80 → no match → return
+                            NfRule {
+                                handle: None, comment: None,
+                                matches: vec![NfMatch::Transport {
+                                    protocol: TransportProto::Tcp,
+                                    field: TransportField::Dport,
+                                    op: MatchOp::Eq, value: "22".to_string(),
+                                }],
+                                action: NfAction::Verdict { verdict: NfVerdict::Drop },
+                            },
+                        ],
+                    },
+                ],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "jump-return".to_string(),
+        description: None,
+        interfaces: default_interfaces(), routing_tables: tables, ip_rules: rules,
+        netfilter, xdp: XdpConfig::default(), sysctl: SysctlConfig::default(), topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321), dst_port: Some(80),
+            conntrack_state: ConntrackState::New,
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    // Jump to "check" → no match on port 22 → return → next rule accept
+    assert_eq!(result.verdict, FinalVerdict::LocalDelivery);
+}
+
+// ============================================================
+// 엣지 케이스
+// ============================================================
+
+#[test]
+fn test_no_routes_no_rules() {
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "no-routes".to_string(),
+        description: None,
+        interfaces: default_interfaces(),
+        routing_tables: vec![],
+        ip_rules: vec![],
+        netfilter: empty_netfilter(),
+        xdp: XdpConfig::default(),
+        sysctl: SysctlConfig::default(),
+        topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            src_ip: Some("10.0.0.100".parse().unwrap()),
+            dst_ip: Some("8.8.8.8".parse().unwrap()),
+            protocol: IpProtocol::Tcp,
+            src_port: Some(54321), dst_port: Some(80),
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Drop);
+}
+
+#[test]
+fn test_sctp_port_nat() {
+    let (rules, tables) = default_routing();
+    let netfilter = NetfilterConfig {
+        nftables: Some(NftablesRuleset {
+            tables: vec![NfTable {
+                family: NfFamily::Ip, name: "nat".to_string(),
+                chains: vec![NfChain {
+                    name: "prerouting".to_string(),
+                    chain_type: Some(NfChainType::Nat),
+                    hook: Some(NfHook::Prerouting), priority: Some(-100),
+                    policy: Some(NfVerdict::Accept),
+                    rules: vec![NfRule {
+                        handle: None, comment: None,
+                        matches: vec![],
+                        action: NfAction::Nat { action: NatAction::Dnat {
+                            addr: Some("192.168.1.100".parse().unwrap()),
+                            port: Some(9999),
+                        }},
+                    }],
+                }],
+            }],
+        }),
+        iptables: None,
+    };
+
+    let scenario = Scenario {
+        version: "1.0".to_string(),
+        name: "sctp-nat".to_string(),
+        description: None,
+        interfaces: default_interfaces(), routing_tables: tables, ip_rules: rules,
+        netfilter, xdp: XdpConfig::default(), sysctl: SysctlConfig::default(), topology: None,
+        packet: PacketDef {
+            ingress_interface: "eth0".to_string(),
+            src_ip: Some("203.0.113.50".parse().unwrap()),
+            dst_ip: Some("10.0.0.1".parse().unwrap()),
+            protocol: IpProtocol::Sctp,
+            src_port: Some(5000), dst_port: Some(5001),
+            ..PacketDef::default()
+        },
+    };
+
+    let result = engine::run(&scenario);
+    assert_eq!(result.verdict, FinalVerdict::Forwarded);
+    let last = &result.trace.last().unwrap().state_after;
+    // SCTP has ports → DNAT should change dst_port
+    assert_eq!(last.dst_port, Some(9999));
+    assert_eq!(last.dst_ip, Some("192.168.1.100".parse::<IpAddr>().unwrap()));
+}
+
+// ============================================================
 // Endpoint Model Test: Simple RemoteClient → LocalServer flow
 // ============================================================
 #[test]
